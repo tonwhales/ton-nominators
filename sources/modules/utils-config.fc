@@ -1,0 +1,7 @@
+(int, int) get_stake_parameters() {
+    var cs = config_param(15).begin_parse();
+    int electedFor = cs~load_uint(32);
+    cs~skip_bits(64);
+    int stakeHeldFor = cs~load_uint(32);
+    return (electedFor, stakeHeldFor);
+}

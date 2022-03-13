@@ -1,0 +1,1694 @@
+;;
+;; Errors
+;;
+
+int error::invalid_address() asm "70 PUSHINT";
+int error::invalid_message() asm "72 PUSHINT";
+int error::access_denied() asm "73 PUSHINT";
+int error::internal_error() asm "74 PUSHINT";
+int error::already_deployed() asm "75 PUSHINT";
+int error::too_low_value() asm "76 PUSHINT";
+int error::invalid_stake_value() asm "77 PUSHINT";
+int error::unknown_text_command() asm "78 PUSHINT";
+
+;;
+;; Members
+;;
+
+int op::stake_deposit() asm "2077040623 PUSHINT";
+int op::stake_deposit::response() asm "3326208306 PUSHINT";
+int op::stake_withdraw() asm "3665837821 PUSHINT";
+int op::stake_withdraw::delayed() asm "1958425639 PUSHINT";
+int op::stake_withdraw::response() asm "601104865 PUSHINT";
+int op::donate() asm "1203495973 PUSHINT";
+int op::donate::response() asm "3095625004 PUSHINT";
+;;
+;; Owner
+;;
+
+int op::upgrade() asm "3690657815 PUSHINT";
+int op::upgrade::response() asm "1395540087 PUSHINT";
+int op::update() asm "37541164 PUSHINT";
+int op::update::response() asm "839996522 PUSHINT";
+
+;;
+;; Controller
+;;
+
+int op::stake_send() asm "2718326572 PUSHINT";
+int op::accept_stakes() asm "2577928699 PUSHINT";
+int op::accept_withdraws() asm "2711607604 PUSHINT";
+int op::stake_recover() asm "1699565966 PUSHINT";
+int op::withdraw_unowned() asm "622684824 PUSHINT";
+int op::withdraw_unowned::response() asm "488052159 PUSHINT";
+int op::force_kick() asm "1396625244 PUSHINT";
+int op::force_kick::notification() asm "2060499266 PUSHINT";
+
+;;
+;; Elector
+;;
+
+int elector::refund::request() asm "0x47657424 PUSHINT";
+int elector::refund::response() asm "0xf96f7324 PUSHINT";
+
+int elector::stake::request() asm "0x4e73744b PUSHINT";
+int elector::stake::response() asm "0xf374484c PUSHINT";
+int elector::stake::response::fail() asm "0xee6f454c PUSHINT";
+
+;;
+;; Send Mode
+;;
+
+int send_mode::default() asm "0 PUSHINT";
+int send_mode::separate_gas() asm "1 PUSHINT";
+int send_mode::ignore_errors() asm "2 PUSHINT";
+int send_mode::carry_remaining_balance() asm "128 PUSHINT";
+int send_mode::carry_remaining_value() asm "64 PUSHINT";
+int send_mode::destroy_if_zero() asm "64 PUSHINT";
+
+;;
+;; Coins
+;;
+
+int coins::1() asm "1000000000 PUSHINT";
+int coins::100() asm "100000000000 PUSHINT";
+
+;;
+;; Fees
+;;
+
+int fees::storage_reserve() asm "1000000000 PUSHINT"; ;; 1 TON
+int fees::receipt() asm "100000000 PUSHINT"; ;; 0.1 TON
+int fees::op() asm "100000000 PUSHINT"; ;; 0.1 TON
+int fees::deploy() asm "5000000000 PUSHINT"; ;; 5 TON
+int fees::stake_fees() asm "2000000000 PUSHINT"; ;; 2 TON
+
+;;
+;; Parameters
+;;
+
+int params::min_op() asm "100000000 PUSHINT"; ;; 0.1 TON
+int params::min_stake() asm "1000000000 PUSHINT"; ;; 1 TON
+int params::min_fee() asm "1000000000 PUSHINT"; ;; 1 TON
+int params::pending_op() asm "5000000000 PUSHINT"; ;; 5 TON
+int params::ppc_precision() asm "10000000000000 PUSHINT"; ;; 10^13
+
+;;
+;; Members
+;;
+
+int owner_id() asm "0 PUSHINT";
+
+;;
+;; Basic workchain addresses
+;;
+
+int parse_work_addr(slice cs) {
+  (int sender_wc, slice sender_addr) = parse_var_addr(cs);
+  throw_unless(error::invalid_address(), 0 == sender_wc);
+  return sender_addr~load_uint(256);
+}
+
+(slice) serialize_work_addr(int addr) {
+   return (begin_cell()
+     .store_uint(2, 2)  ;; Is std address
+     .store_uint(0, 1)  ;; Non-unicast
+     .store_uint(0, 8)  ;; Basic workchain
+     .store_uint(addr, 256) ;; Address hash
+   ).end_cell().begin_parse();
+}
+
+;;
+;; Custom Commands
+;;
+
+(int) equal_slices (slice s1, slice s2) asm "SDEQ";
+builder store_builder(builder to, builder what) asm(what to) "STB";
+builder store_builder_ref(builder to, builder what) asm(what to) "STBREFR";
+(slice, cell) load_maybe_cell(slice s) asm( -> 1 0) "LDDICT";
+(int) mod (int x, int y) asm "MOD";
+builder store_coins(builder b, int x) asm "STGRAMS";
+(slice, int) load_coins(slice s) asm( -> 1 0) "LDGRAMS";
+
+
+;;
+;; Events
+;;
+
+() send_std_message(
+  slice to_addr,
+  int value,
+  int mode, 
+  int op, 
+  int query_id,
+  builder content
+) impure {
+
+  var body = begin_cell()
+      .store_uint(op, 32)
+      .store_uint(query_id, 64)
+      .store_builder(content)
+  .end_cell();
+
+  var msg = begin_cell()
+    .store_uint(0x10, 6)
+    .store_slice(to_addr)
+    .store_coins(value)
+    .store_uint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+    .store_ref(body)
+  .end_cell();
+
+  send_raw_message(msg, mode);
+}
+
+() send_empty_std_message(
+  slice to_addr,
+  int value,
+  int mode, 
+  int op, 
+  int query_id
+) impure {
+
+  var body = begin_cell()
+      .store_uint(op, 32)
+      .store_uint(query_id, 64)
+  .end_cell();
+
+  var msg = begin_cell()
+    .store_uint(0x10, 6)
+    .store_slice(to_addr)
+    .store_coins(value)
+    .store_uint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+    .store_ref(body)
+  .end_cell();
+
+  send_raw_message(msg, mode);
+}
+
+() send_text_message(
+  slice to_addr,
+  int value,
+  int mode, 
+  builder content
+) impure {
+
+  var body = begin_cell()
+      .store_uint(0, 32)
+      .store_builder(content)
+  .end_cell();
+
+  var msg = begin_cell()
+    .store_uint(0x10, 6)
+    .store_slice(to_addr)
+    .store_coins(value)
+    .store_uint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+    .store_ref(body)
+  .end_cell();
+
+  send_raw_message(msg, mode);
+}
+
+;;
+;; Generate
+;;
+
+(int) new_query_id() inline {
+    return now() + mod(cur_lt(), 4294967296);
+}
+
+;;
+;; Text Utils
+;;
+
+(int, int) encode_number_to_text(int number) {
+  int len = 0;
+  int value = 0;
+  int mult = 1;
+  do {
+    (number, int res) = number.divmod(10);
+    value = value + (res + 48) * mult;
+    mult = mult * 256;
+    len = len + 1;
+  } until (number == 0);
+  return (len, value);
+}
+
+builder store_coins_string(builder msg, int amount) {
+  (int ceil, int res) = divmod(amount, 1000000000);
+  (int cl, int cv) = encode_number_to_text(ceil);
+  msg = msg.store_uint(cv, cl * 8 );
+  msg = msg.store_uint(46, 8); ;; "."
+  (int rl, int rv) = encode_number_to_text(res);
+  ;; repeat( 9 - rl ) {
+  ;;  msg = msg.store_uint(48, 8); ;; " "
+  ;; }
+  return msg.store_uint(rv, rl * 8);
+}
+
+
+;; 'Stake'
+builder store_text_stake(builder b) inline {
+    return b.store_uint(358434827109, 40);
+}
+
+;; ' '
+builder store_text_space(builder b) inline {
+    return b.store_uint(32, 8);
+}
+
+;; 'accepted'
+builder store_text_accepted(builder b) inline {
+    return b.store_uint(7017561931702887780, 64);
+}
+
+;; Stake 123.333 accepted
+builder store_accepted_stake(builder b, int amount) inline {
+    return b.store_text_stake()
+            .store_text_space()
+            .store_coins_string(amount)
+            .store_text_space()
+            .store_text_accepted();
+}
+
+;; 'Withdraw completed'
+builder store_withdraw_completed(builder b) inline {
+    return b.store_uint(7614653257073527469736132165096662684165476, 144);
+}
+
+;; 'Withdraw requested. Please, retry command when your balance is ready.'
+builder store_withdraw_delayed(builder b) inline {
+    return b
+      .store_uint(1949351233810823032252520485584178069312463918, 152)
+      .store_text_space()
+      .store_uint(129235456374863711129272833139953997066553106386817338770482542, 208)
+      .store_text_space()
+      .store_uint(49121518824486666175116745069183411942170479416928337752603523374, 216);
+}
+
+(int, int) get_stake_parameters() {
+    var cs = config_param(15).begin_parse();
+    int electedFor = cs~load_uint(32);
+    cs~skip_bits(64);
+    int stakeHeldFor = cs~load_uint(32);
+    return (electedFor, stakeHeldFor);
+}
+
+global int ctx_query_id;
+
+global int ctx_locked;
+global slice ctx_owner;
+global slice ctx_controller;
+global slice ctx_proxy;
+global cell ctx_proxy_state;
+
+global int ctx_profit_per_coin;
+global int ctx_balance;
+global int ctx_balance_sent;
+global int ctx_balance_withdraw;
+global int ctx_balance_pending_withdraw;
+global int ctx_balance_pending_deposits;
+
+global cell ctx_nominators;
+
+;; var (enabled, udpates_enabled, min_stake, deposit_fee, withdraw_fee, pool_fee, receipt_price) = ctx_extras;
+global (int, int, int, int, int, int, int) ctx_extras;
+
+() load_base_data() impure {
+    var ds = get_data().begin_parse();
+    ctx_locked = ds~load_int(1);
+
+    ctx_owner = ds~load_msg_addr();
+    ctx_controller = ds~load_msg_addr();
+    ctx_proxy = ds~load_msg_addr();
+
+    cell balance_cell = ds~load_ref();
+    ctx_nominators = ds~load_dict();
+    ctx_proxy_state = ds~load_ref();
+    cell extras_cell = null();
+    if (ds.slice_refs() > 0) {
+        extras_cell = ds~load_ref();
+    }
+    ds.end_parse();
+
+    var bs = balance_cell.begin_parse();
+    ctx_profit_per_coin = bs~load_int(128);
+    ctx_balance = bs~load_coins();
+    ctx_balance_sent = bs~load_coins();
+    ctx_balance_withdraw = bs~load_coins();
+    ctx_balance_pending_withdraw = bs~load_coins();
+    ctx_balance_pending_deposits = bs~load_coins();
+    bs.end_parse();
+
+    ;; Parsing extras (enabled, upgrades_enabled, min_stake, deposit_fee, withdraw_fee, pool_fee, receipt_price)
+    ctx_extras = (
+        true,  ;; Enabled
+        true,  ;; Upgrades enabled
+        params::min_stake(), ;; Min Stake
+        fees::op(), ;; Deposit fee
+        fees::op(), ;; Withdraw fee
+        10 * 100, ;; Pool fee (%),
+        fees::receipt()
+    );
+    if (~ extras_cell.null?()) {
+        var ec = extras_cell.begin_parse();
+        var enabled = ec~load_int(1);
+        var udpates_enabled = ec~load_int(1);
+        var min_stake = ec~load_coins();
+        var deposit_fee = ec~load_coins();
+        var withdraw_fee = ec~load_coins();
+        var pool_fee = ec~load_coins();
+        var receipt_price = ec~load_coins();
+        ctx_extras = (enabled, udpates_enabled, min_stake, deposit_fee, withdraw_fee, pool_fee, receipt_price);
+        ec.end_parse();
+    }
+}
+
+() store_base_data() impure {
+    var (enabled, udpates_enabled, min_stake, deposit_fee, withdraw_fee, pool_fee, receipt_price) = ctx_extras;
+    set_data(begin_cell()
+        .store_int(ctx_locked, 1)
+        .store_slice(ctx_owner)
+        .store_slice(ctx_controller)
+        .store_slice(ctx_proxy)
+        .store_ref(begin_cell()
+            .store_int(ctx_profit_per_coin, 128)
+            .store_coins(ctx_balance)
+            .store_coins(ctx_balance_sent)
+            .store_coins(ctx_balance_withdraw)
+            .store_coins(ctx_balance_pending_withdraw)
+            .store_coins(ctx_balance_pending_deposits)
+        .end_cell())
+        .store_dict(ctx_nominators)
+        .store_ref(ctx_proxy_state)
+        .store_ref(begin_cell()
+            .store_int(enabled, 1)
+            .store_int(udpates_enabled, 1)
+            .store_coins(min_stake)
+            .store_coins(deposit_fee)
+            .store_coins(withdraw_fee)
+            .store_coins(pool_fee)
+            .store_coins(receipt_price)
+        .end_cell())
+    .end_cell());
+    commit();
+}
+
+global int proxy_stake_at;
+global int proxy_stake_until;
+global int proxy_stake_sent;
+global int proxy_stored_query_id;
+global int proxy_stored_query_op;
+global int proxy_stored_query_stake;
+
+() load_validator_data() impure {
+    var cs = ctx_proxy_state.begin_parse();
+    proxy_stake_at = cs~load_uint(32);
+    proxy_stake_until = cs~load_uint(32);
+    proxy_stake_sent = cs~load_coins();
+    proxy_stored_query_id = cs~load_uint(64);
+    proxy_stored_query_op = cs~load_uint(32);
+    proxy_stored_query_stake = cs~load_coins();
+    cs.end_parse();
+}
+
+() store_validator_data() impure {
+    ctx_proxy_state = begin_cell()
+        .store_uint(proxy_stake_at, 32)
+        .store_uint(proxy_stake_until, 32)
+        .store_coins(proxy_stake_sent)
+        .store_uint(proxy_stored_query_id, 64)
+        .store_uint(proxy_stored_query_op, 32)
+        .store_coins(proxy_stored_query_stake)
+    .end_cell();
+}
+
+;;
+;; Members
+;;
+
+global int ctx_member;
+global int ctx_member_balance;
+global int ctx_member_pending_withdraw;
+global int ctx_member_pending_withdraw_all;
+global int ctx_member_pending_deposit;
+global int ctx_member_withdraw;
+global int ctx_member_profit_per_coin;
+global int ctx_member_exist;
+
+slice load_member_slice(slice cs) impure {
+    ctx_member_profit_per_coin = cs~load_int(128);
+    ctx_member_balance = cs~load_coins();
+    ctx_member_pending_withdraw = cs~load_coins();
+    ctx_member_pending_withdraw_all = cs~load_int(1);
+    ctx_member_pending_deposit = cs~load_coins();
+    ctx_member_withdraw = cs~load_coins();
+    ctx_member_exist = true;
+    return cs;
+}
+
+() load_member(int member) impure {
+    var (cs, found) = ctx_nominators.udict_get?(256, member);
+    ctx_member = member;
+    if (found) {
+        cs = load_member_slice(cs);
+        cs.end_parse();
+        ctx_member_exist = true;
+    } else {
+        ctx_member_balance = 0;
+        ctx_member_pending_withdraw = 0;
+        ctx_member_pending_withdraw_all = false;
+        ctx_member_pending_deposit = 0;
+        ctx_member_profit_per_coin = 0;
+        ctx_member_withdraw = 0;
+        ctx_member_exist = false;
+    }
+}
+
+() store_member() impure {
+    var shouldExist = (ctx_member_balance > 0) | (ctx_member_pending_deposit > 0) | (ctx_member_withdraw > 0);
+    if ((~ shouldExist) & ctx_member_exist) {
+        ;; Compiler crashes when single lined
+        var (changed, _) = udict_delete?(ctx_nominators, 256, ctx_member);
+        ctx_nominators = changed;
+    } elseif (shouldExist) {
+        var data = begin_cell()
+            .store_int(ctx_member_profit_per_coin, 128)
+            .store_coins(ctx_member_balance)
+            .store_coins(ctx_member_pending_withdraw)
+            .store_int(ctx_member_pending_withdraw_all, 1)
+            .store_coins(ctx_member_pending_deposit)
+            .store_coins(ctx_member_withdraw);
+
+        ;; Compiler crashes when single lined
+        var changed = udict_set_builder(ctx_nominators, 256, ctx_member, data);
+        ctx_nominators = changed;
+    }
+}
+
+;;
+;; Low level operations
+;;
+
+() add_member_pending_withdraw(int delta) impure inline {
+    ctx_balance_pending_withdraw = ctx_balance_pending_withdraw + delta;
+    ctx_member_pending_withdraw = ctx_member_pending_withdraw + delta;
+} 
+() set_member_pending_withdraw(int value) impure inline {
+    add_member_pending_withdraw(value - ctx_member_pending_withdraw);
+}
+
+() add_member_pending_deposit(int delta) impure inline {
+    ctx_member_pending_deposit = ctx_member_pending_deposit + delta;
+    ctx_balance_pending_deposits = ctx_balance_pending_deposits + delta;
+}
+() set_member_pending_deposit(int value) impure inline {
+    add_member_pending_deposit(value - ctx_member_pending_deposit);
+}
+
+int compose_profit(int a, int b) {
+    ;; (a + 1) * (b + 1) - 1
+    return (((a + params::ppc_precision()) * (b + params::ppc_precision())) / params::ppc_precision()) - params::ppc_precision(); ;; NOTE: Rounded down
+}
+
+int apply_profit(int value, int value_profit, int profit) {
+    return ((params::ppc_precision() + profit) * value) / (params::ppc_precision() + value_profit); ;; NOTE: Rounded down
+}
+
+;;
+;; Deposit
+;;
+
+() member_update_balance() impure {
+    
+    ;; Update profit (for non-owner)
+    if (ctx_member != owner_id()) {
+        if (ctx_profit_per_coin != ctx_member_profit_per_coin) {
+            int new_balance = apply_profit(ctx_member_balance, ctx_member_profit_per_coin, ctx_profit_per_coin);
+            int delta_balance = new_balance - ctx_member_balance;
+            ctx_member_balance = ctx_member_balance + delta_balance;
+            ctx_member_profit_per_coin = ctx_profit_per_coin;
+        }
+    }
+
+    ;; Update pending withdraw
+    if (ctx_member_pending_withdraw_all) {
+       if (ctx_member_pending_withdraw != ctx_member_balance) {
+           set_member_pending_withdraw(ctx_member_balance);
+        }
+    } else {
+        if (ctx_member_pending_withdraw > ctx_member_balance) {
+            set_member_pending_withdraw(ctx_member_balance);
+        }
+    }
+}
+
+() member_reset_pending_withdraw() impure {
+    set_member_pending_withdraw(0);
+    ctx_member_pending_withdraw_all = false;
+}
+
+() member_stake_deposit(int value) impure {
+    throw_unless(error::invalid_stake_value(), value > 0);
+
+    ;; Update balances
+    member_update_balance();
+
+    ;; Reset pending withdrawal
+    member_reset_pending_withdraw();
+
+    ;; Add deposit to pending
+    ;; NOTE: We are not adding directly deposit to member's balance
+    ;;       and we are always confirming acception of deposit to a pool
+    ;;       via sending accept message. This could be done on- and off-chain.
+    ;;       This could be useful to make private nominator pools or black lists.
+    ;;       Anyone always could withdraw their deposits though.
+    add_member_pending_deposit(value);
+}
+
+() member_accept_stake() impure {
+
+    ;; Checks if there are pending deposits
+    throw_unless(error::invalid_message(), ctx_member_pending_deposit > 0);
+
+    ;; Check if not locked
+    throw_if(error::invalid_message(), ctx_locked);
+
+    ;; Recalculate balance
+    member_update_balance();
+
+    ;; Move deposit to member's balance
+    var amount = ctx_member_pending_deposit;
+    set_member_pending_deposit(0);
+
+
+    ctx_member_balance = ctx_member_balance + amount;
+    ctx_balance =  ctx_balance + amount;
+}
+
+;;
+;; Withdraw
+;;
+
+(int, int) member_stake_withdraw(int value) impure {
+
+    ;; Check input
+    throw_unless(error::invalid_stake_value(), value >= 0);
+
+    ;; value~dump();
+
+    ;; Update balances
+    member_update_balance();
+
+    ;; value~dump();
+
+    ;; Reset pending withdrawal: would be overwritten later
+    member_reset_pending_withdraw();
+
+    ;; value~dump();
+
+    ;; Check withdraw all
+    var withdraw_all = false;
+    if (value == 0) {
+        withdraw_all = true;
+        value = ctx_member_pending_deposit + ctx_member_balance + ctx_member_withdraw;
+    }
+
+    ;; Trying to withdraw immediatelly
+    var remaining = value;
+    var withdrawed = 0;
+    
+    ;; Try to withdraw from pending deposit
+    if ((remaining > 0) & (ctx_member_pending_deposit >= 0)) {
+        int delta = min(ctx_member_pending_deposit, value);
+        add_member_pending_deposit(- delta);
+        withdrawed = withdrawed + delta;
+        remaining = remaining - delta;
+    }
+
+    ;; Try to withdraw from withdraw balance
+    if ((remaining > 0) & ctx_member_withdraw > 0) {
+        int delta = min(ctx_member_withdraw, value);
+        ctx_member_withdraw = ctx_member_withdraw - delta;
+        ctx_balance_withdraw = ctx_balance_withdraw - delta;
+        withdrawed = withdrawed + delta;
+        remaining = remaining - delta;
+    }
+
+    ;; Try to withdraw from balance
+    if ((remaining > 0) & (~ ctx_locked) & (ctx_member_balance > 0)) {
+        int delta = min(ctx_member_balance, value);
+        ctx_member_balance = ctx_member_balance - delta;
+        ctx_balance = ctx_balance - delta;
+        withdrawed = withdrawed + delta;
+        remaining = remaining - delta;
+    }
+
+    ;; Add to pending withdrawals
+    if (remaining > 0) {
+        add_member_pending_withdraw(remaining);
+        ctx_member_pending_withdraw_all = withdraw_all;
+    }
+
+    int p = 0;
+    p = ctx_balance_pending_deposits; p~dump();
+    p = ctx_balance_pending_withdraw; p~dump();
+
+    ;; Return withdraw result
+    return (withdrawed, remaining == 0);
+}
+
+() member_accept_withdraw() impure {
+    
+    ;; Checks if there are pending withdrawals
+    throw_unless(error::invalid_message(), ctx_member_pending_withdraw > 0);
+
+    ;; Check if not locked
+    throw_if(error::invalid_message(), ctx_locked);
+
+    ;; Recalculate balance
+    member_update_balance();
+
+    ;; Move deposit to member's balance
+    var amount = ctx_member_pending_withdraw;
+
+    ctx_member_balance = ctx_member_balance - amount;
+    ctx_member_withdraw = ctx_member_withdraw + amount;
+    ctx_balance = ctx_balance - amount;
+    ctx_balance_withdraw = ctx_balance_withdraw + amount;
+    ctx_balance_pending_withdraw = ctx_balance_pending_withdraw - amount;
+    ctx_member_pending_withdraw = 0;
+    ctx_member_pending_withdraw_all = false;
+}
+
+() distribute_profit(int profit) impure {
+
+    ;; Load extras
+    var (enabled, udpates_enabled, min_stake, deposit_fee, withdraw_fee, pool_fee, receipt_price) = ctx_extras;
+
+    ;; Load owner balances
+    load_member(0);
+
+    ;; Loss
+    if (profit < 0) {
+
+        ;; Stakes
+        var owner_stake = ctx_member_balance;
+        var nominators_stake = ctx_balance - owner_stake;
+
+        ;; Distribute loss to everyone
+        var cycleProfitPerCoin = profit * params::ppc_precision()  / ctx_balance;
+        var nominators_profit = (nominators_stake * cycleProfitPerCoin) / params::ppc_precision();
+        var owner_profit = profit - nominators_profit;
+
+        ;; Update balances
+        ctx_balance = ctx_balance + profit;
+        ctx_member_balance = ctx_member_balance + owner_profit;
+        ctx_profit_per_coin = compose_profit(ctx_profit_per_coin, cycleProfitPerCoin);
+
+        ;; Persist
+        store_member();
+
+        return ();
+    }
+
+    ;; Profit
+    if (profit > 0) {
+
+        ;; Stakes
+        var owner_stake = ctx_member_balance;
+        var nominators_stake = ctx_balance - owner_stake;
+
+        ;; Distribute profit
+        var cycleProfitPerCoin = profit * params::ppc_precision() * (100 * 100 - pool_fee) / (ctx_balance * 100 * 100);
+        var nominators_profit = (nominators_stake * cycleProfitPerCoin) / params::ppc_precision();
+        var owner_profit = profit - nominators_profit;
+
+        ;; Update balances
+        ctx_balance = ctx_balance + profit;
+        ctx_member_balance = ctx_member_balance + owner_profit;
+        ctx_profit_per_coin = compose_profit(ctx_profit_per_coin, cycleProfitPerCoin);
+
+        ;; Persist
+        store_member();
+
+        return ();
+    }
+}
+
+;;
+;; Validator
+;;
+
+() on_locked() impure {
+    if (~ ctx_locked) {
+        
+        ;; Allow locking only on no pending withdrawals
+        throw_unless(error::invalid_message(), ctx_balance_pending_withdraw == 0);
+        
+        ;; Update state
+        ctx_locked = true;
+    }
+}
+
+() on_unlocked() impure {
+    if (ctx_locked) {
+
+        ;; Update state
+        ctx_locked = false;
+    }
+}
+
+int available_to_stake() {
+    return ctx_balance - ctx_balance_sent;
+}
+
+int owned_balance() {
+    return ctx_balance - ctx_balance_sent + ctx_balance_pending_deposits + ctx_balance_withdraw + fees::storage_reserve();
+}
+
+() on_stake_sent(int stake) impure {
+    ctx_balance_sent = ctx_balance_sent + stake;
+}
+
+() on_stake_sent_failed(int stake) impure {
+    ctx_balance_sent = ctx_balance_sent - stake;
+}
+
+() on_stake_recovered(int stake) impure {
+
+    ;; Calculate profit
+    ;; NOTE: ctx_locked is true meaning that ctx_balance 
+    ;;       have the same value as was when stake was sent
+    ;;       balances are going to be unlocked after profit distribution
+    var profit = stake - ctx_balance_sent;
+
+    ;; Distribute profit
+    distribute_profit(profit);
+
+    ;; Reset sent amount
+    ctx_balance_sent = 0;
+}
+
+() op_deposit(int member, int value) impure {
+
+    ;; Read extras
+    var (enabled, udpates_enabled, min_stake, deposit_fee, withdraw_fee, pool_fee, receipt_price) = ctx_extras;
+    throw_unless(error::invalid_message(), enabled);
+    
+    ;; Read stake value
+    int fee = receipt_price + deposit_fee;
+    int stake = value - fee;
+    throw_unless(error::invalid_stake_value(), stake >= min_stake);
+
+    ;; Load nominators
+    load_member(member);
+
+    ;; Add deposit
+    member_stake_deposit(stake);
+
+    ;; Resolve address
+    var address = ctx_owner;
+    if (member != owner_id()) {
+        address = serialize_work_addr(member);
+    }
+
+    ;; Send receipt
+    if (ctx_query_id == 0) {
+        send_text_message(
+            address,
+            receipt_price,
+            send_mode::default(),
+            begin_cell()
+                .store_accepted_stake(stake)
+        );
+    } else {
+        send_empty_std_message(
+            address,
+            receipt_price,
+            send_mode::default(),
+            op::stake_deposit::response(),
+            ctx_query_id
+        );
+    }
+
+    ;; Persist
+    store_member();
+    store_base_data();
+}
+
+() op_withdraw(int member, int value, int stake) impure {
+
+    ;; Read extras
+    var (enabled, udpates_enabled, min_stake, deposit_fee, withdraw_fee, pool_fee, receipt_price) = ctx_extras;
+
+    ;; Check fee
+    int fee = receipt_price + withdraw_fee;
+
+    ;; Check value
+    throw_unless(error::too_low_value(), value == fee);
+
+    ;; Load member
+    load_member(member);
+
+    ;; Check stake
+    throw_unless(error::invalid_stake_value(), stake >= 0);
+    throw_unless(error::invalid_stake_value(), ctx_member_balance + ctx_member_pending_deposit >= stake);
+
+    ;; Try to withdraw immediatelly
+    var (withdrawed, all) = member_stake_withdraw(stake);
+
+    ;; Resolve address
+    var address = ctx_owner;
+    if (member != owner_id()) {
+        address = serialize_work_addr(member);
+    }
+    
+    ;; Send receipt
+    if (ctx_query_id == 0) {
+        send_text_message(
+            address,
+            withdrawed + receipt_price,
+            send_mode::default(),
+            all ? begin_cell().store_withdraw_completed() : begin_cell().store_withdraw_delayed()
+        );
+    } else {    
+        send_empty_std_message(
+            address,
+            withdrawed + receipt_price,
+            send_mode::default(),
+            all ? op::stake_withdraw::response() : op::stake_withdraw::delayed(),
+            ctx_query_id
+        );
+    }
+
+    ;; Persist
+    store_member();
+    store_base_data();
+}
+
+() op_donate(int value) impure {
+    
+    ;; Check value
+    throw_unless(error::invalid_message(), value >= 2 * coins::1());
+    
+    ;; Distribute profit to everyone
+    distribute_profit(value - coins::1());
+
+    ;; Persist
+    store_base_data();
+}
+
+() op_upgrade(int value, slice in_msg) impure {
+
+    ;; Read extras
+    var (enabled, udpates_enabled, min_stake, deposit_fee, withdraw_fee, pool_fee, receipt_price) = ctx_extras;
+    throw_unless(error::invalid_message(), udpates_enabled);
+    
+    ;; Check value
+    throw_unless(error::too_low_value(), value >= fees::deploy());
+
+    ;; Upgrade code
+    var code = in_msg~load_ref();
+    in_msg.end_parse();
+    set_code(code);
+
+    ;; Send receipt
+    send_empty_std_message(
+        ctx_owner,
+        0,
+        send_mode::carry_remaining_value(),
+        op::upgrade::response(),
+        ctx_query_id
+    );
+}
+
+() op_update(int value, slice in_msg) impure {
+
+    ;; Read extras
+    var (enabled, udpates_enabled, min_stake, deposit_fee, withdraw_fee, pool_fee, receipt_price) = ctx_extras;
+
+    ;; Check value
+    throw_unless(error::too_low_value(), value >= fees::deploy());
+
+    ;; Check extras
+    var newExtras = in_msg~load_ref();
+    var es = newExtras.begin_parse();
+    var new_enabled = es~load_int(1);
+    var new_udpates_enabled = es~load_int(1);
+    var new_min_stake = es~load_coins();
+    var new_deposit_fee = es~load_coins();
+    var new_withdraw_fee = es~load_coins();
+    var new_pool_fee = es~load_coins();
+    var new_receipt_price = es~load_coins();
+    es.end_parse();
+
+    ;; Once upgrades are disabled: prohibit re-enabling
+    throw_if(error::invalid_message(), (~ udpates_enabled) & new_udpates_enabled);
+
+    ;; At least min_stake
+    throw_unless(error::invalid_message(), new_min_stake >= params::min_stake());
+    ;; At least op fee
+    throw_unless(error::invalid_message(), new_deposit_fee >= fees::op());
+    throw_unless(error::invalid_message(), new_withdraw_fee >= fees::op());
+    ;; Must be in 0...10000
+    throw_unless(error::invalid_message(), new_pool_fee <= 100 * 100);
+    ;; At least receipt price
+    throw_unless(error::invalid_message(), new_receipt_price >= fees::receipt());
+
+    ;; Persist extras
+    ctx_extras = (new_enabled, new_udpates_enabled, new_min_stake, new_deposit_fee, new_withdraw_fee, new_pool_fee, new_receipt_price);
+    store_base_data();
+
+    ;; Send receipt
+    send_empty_std_message(
+        ctx_owner,
+        0,
+        send_mode::carry_remaining_value(),
+        op::update::response(),
+        ctx_query_id
+    );
+}
+
+;;
+;; Stake Sending
+;;
+
+() op_controller_stake_send(int value, slice in_msg) impure {
+
+    ;; Parse message
+    var stake = in_msg~load_coins();
+    var validator_pubkey = in_msg~load_uint(256);
+    var stake_at = in_msg~load_uint(32);
+    var max_factor = in_msg~load_uint(32);
+    var adnl_addr = in_msg~load_uint(256);
+    var signature_ref = in_msg~load_ref();
+    var signature = signature_ref.begin_parse().preload_bits(512);
+    in_msg.end_parse();
+
+    ;; Check message value
+    throw_unless(error::invalid_message(), value >= fees::stake_fees());
+
+    ;; Allow only single request to elector
+    if (proxy_stored_query_id != 0) {
+        throw(error::invalid_message());
+    }
+
+    ;; Allow update only for current stake
+    if ((proxy_stake_at != 0) & (proxy_stake_at != stake_at)) {
+        throw(error::invalid_message());
+    }
+
+    ;; Check stake value
+    var availableStake = available_to_stake();
+    throw_unless(error::invalid_stake_value(), availableStake >= stake);
+
+    ;; Parameters
+    var (electedFor, stakeHeldFor) = get_stake_parameters();
+
+    ;; Lock stakes
+    on_locked();
+    
+    ;; Update operation state
+    proxy_stake_at = stake_at;
+    proxy_stake_until = stake_at + electedFor + stakeHeldFor;
+    proxy_stake_sent = proxy_stake_sent + stake;
+    proxy_stored_query_id = ctx_query_id;
+    proxy_stored_query_op = elector::stake::request();
+    proxy_stored_query_stake = stake;
+
+    ;; Update balances
+    on_stake_sent(stake);
+
+    ;; Send message to elector
+    send_std_message(
+        ctx_proxy, 
+        stake + coins::1(), 
+        send_mode::separate_gas(), 
+        elector::stake::request(), 
+        proxy_stored_query_id, 
+        begin_cell()
+            .store_uint(validator_pubkey, 256)
+            .store_uint(stake_at, 32)
+            .store_uint(max_factor, 32)
+            .store_uint(adnl_addr, 256)
+            .store_ref(signature_ref)
+    );
+
+    ;; Persist
+    store_validator_data();
+    store_base_data();
+}
+
+() op_elector_stake_response(int value, slice in_msg) impure {
+
+    ;; Check response
+    if (ctx_query_id != proxy_stored_query_id) {
+        ;; How to handle invalid? How it is possible?
+        return ();
+    }
+    if (proxy_stored_query_op != elector::stake::request()) {
+        ;; How to handle invalid? How it is possible?
+        return ();
+    }
+
+    ;; Reset active query
+    proxy_stored_query_id = 0;
+    proxy_stored_query_op = 0;
+    proxy_stored_query_stake = 0;
+
+    ;; Persist
+    store_validator_data();
+    store_base_data();
+}
+
+() op_elector_stake_response_fail(int value, slice in_msg) impure {
+
+    ;; Load reason
+    var reason = in_msg~load_uint(32);
+
+    ;; Check response
+    if (ctx_query_id != proxy_stored_query_id) {
+        ;; How to handle invalid? How it is possible?
+        return ();
+    }
+    if (proxy_stored_query_op != elector::stake::request()) {
+        ;; How to handle invalid? How it is possible?
+        return ();
+    }
+
+    ;; Update balances
+    on_stake_sent_failed(proxy_stored_query_stake);
+
+    ;; Update proxy state
+    proxy_stake_sent = proxy_stake_sent - proxy_stored_query_stake;
+
+    ;; Reset stake at since sent stake became zero
+    if (proxy_stake_sent == 0) {
+        proxy_stake_at = 0;
+        proxy_stake_until = 0;
+        proxy_stake_sent = 0;
+        on_unlocked();
+    }
+
+    ;; Reset query
+    proxy_stored_query_id = 0;
+    proxy_stored_query_op = 0;
+    proxy_stored_query_stake = 0;
+
+    ;; Persist
+    store_validator_data();
+    store_base_data();
+}
+
+;;
+;; Recover
+;;
+
+() op_stake_recover(int value) impure {
+
+    ;; NOTE: We never block stake recover operation
+    ;;       in case of misbehaviour of something anyone always can get 
+    ;;       coins from elector after lockup period is up
+
+    ;; Allow request only if stake is exited lockup period
+    if ((proxy_stake_until != 0) & (now() < proxy_stake_until)) {
+        throw(error::invalid_message());
+    }
+
+    ;; Check value
+    throw_unless(error::too_low_value(), value >= fees::stake_fees());
+
+    ;; Send message to elector
+    send_empty_std_message(
+        ctx_proxy, 
+        0, 
+        send_mode::carry_remaining_value(),
+        elector::refund::request(), 
+        proxy_stored_query_id
+    );
+
+    ;; Persist
+    store_validator_data();
+    store_base_data();
+}
+
+() op_elector_recover_response(int value, slice in_msg) impure {
+
+    if ((proxy_stake_until != 0) & (now() > proxy_stake_until)) {
+        
+        ;; Reset state: all stake is returned
+        proxy_stake_sent = 0;
+        proxy_stake_at = 0;
+        proxy_stake_until = 0;
+
+        ;; Reset query too
+        proxy_stored_query_id = 0;
+        proxy_stored_query_op = 0;
+        proxy_stored_query_stake = 0;
+
+        ;; Handle stake recovered event
+        ;; NOTE: Any stake recovery outside this condition might be just a noise and 
+        ;;       effect of various race condirtions that doesn't carry any substantianal vakue
+        on_stake_recovered(value - fees::stake_fees());
+
+        ;; Reset lock state
+        ;; NOTE: MUST be after on_stake_recovered since it adjusts withdrawals and 
+        ;;       modifies global balance
+        on_unlocked();
+    }
+
+    ;; Persist
+    store_validator_data();
+    store_base_data();
+}
+
+;;
+;; Withdraw unowned
+;;
+
+() op_controller_withdraw_unowned(int value, slice in_msg) impure {
+
+    ;; Reserve owned
+    raw_reserve(owned_balance(), 0);
+
+    ;; Send message to controller
+    send_empty_std_message(
+        ctx_controller, 
+        0, 
+        send_mode::carry_remaining_balance(), 
+        op::withdraw_unowned::response(), 
+        ctx_query_id
+    );
+}
+
+;;
+;; Process pending
+;;
+
+() op_controller_accept_stakes(int value, slice in_msg) impure {
+
+    ;; Check if enought value
+    throw_unless(error::invalid_message(), value >= params::pending_op());
+
+    ;; Check if not locked
+    throw_if(error::invalid_message(), ctx_locked);
+
+    ;; Parse message
+    var members = in_msg~load_dict();
+    in_msg.end_parse();
+
+    ;; Process operations
+    var member = -1;
+    do {
+        (member, var cs, var f) = members.udict_get_next?(256, member);
+        if (f) {
+            ;; Accept member's stake
+            load_member(member);
+            member_accept_stake();
+            store_member();
+        }
+    } until (~ f);
+
+    ;; Persist
+    store_base_data();
+}
+
+() op_controller_accept_withdraws(int value, slice in_msg) impure {
+
+    ;; Check if enought value
+    throw_unless(error::invalid_message(), value >= params::pending_op());
+
+    ;; Check if not locked
+    throw_if(error::invalid_message(), ctx_locked);
+
+    ;; Parse message
+    var members = in_msg~load_dict();
+    in_msg.end_parse();
+
+    ;; Process operations
+    var member = -1;
+    do {
+        (member, var cs, var f) = members.udict_get_next?(256, member);
+        if (f) {
+            ;; Accept member's stake
+            load_member(member);
+            member_accept_withdraw();
+            store_member();
+        }
+    } until (~ f);
+
+    ;; Persist
+    store_base_data();
+}
+
+() op_controller_force_kick(int value, slice in_msg) impure {
+
+    ;; Check if enought value
+    throw_unless(error::invalid_message(), value >= params::pending_op());
+
+    ;; Check if not locked
+    throw_if(error::invalid_message(), ctx_locked);
+
+    ;; Parse message
+    var members = in_msg~load_dict();
+    in_msg.end_parse();
+
+    ;; Process operations
+    var member = -1;
+    do {
+        (member, var cs, var f) = members.udict_get_next?(256, member);
+        if (f) {
+
+            ;; Reject owner kicking 
+            throw_if(error::invalid_message(), member == owner_id());
+
+            ;; Kick member from a pool
+            load_member(member);
+
+            ;; Withdraw everything
+            var (withdrawed, all) = member_stake_withdraw(0);
+            throw_unless(error::invalid_message(), withdrawed > 0);
+            throw_unless(error::invalid_message(), all);
+
+            ;; Forced kick
+            send_empty_std_message(
+                serialize_work_addr(member),
+                withdrawed,
+                send_mode::default(),
+                op::force_kick::notification(),
+                ctx_query_id
+            );
+            
+            ;; Persist membership
+            store_member();
+        }
+    } until (~ f);
+
+    ;; Persist
+    store_base_data();
+}
+
+;;
+;; Top Level
+;;
+
+() op_controller(int flags, int value, slice in_msg) impure {
+    if (flags & 1) {
+        return ();
+    }
+
+    ;; Check value
+    throw_unless(error::invalid_message(), value >= params::min_op());
+
+    ;; Parse operation
+    int op = in_msg~load_uint(32);
+    int query_id = in_msg~load_uint(64);
+    int gas_limit = in_msg~load_coins();
+    set_gas_limit(gas_limit);
+    ctx_query_id = query_id;
+    throw_unless(error::invalid_message(), ctx_query_id > 0);
+
+    ;; Send stake
+    if (op == op::stake_send()) {
+        op_controller_stake_send(value, in_msg);
+        return ();
+    }
+
+    ;; Recover stake
+    if (op == op::stake_recover()) {
+        op_stake_recover(value);
+        return ();
+    }
+
+    ;; Withdraw unowned
+    if (op == op::withdraw_unowned()) {
+        op_controller_withdraw_unowned(value, in_msg);
+        return ();
+    }
+
+    ;; Accept stakes
+    if (op == op::accept_stakes()) {
+        op_controller_accept_stakes(value, in_msg);
+        return ();
+    }
+
+    ;; Accept withdraws
+    if (op == op::accept_withdraws()) {
+        op_controller_accept_withdraws(value, in_msg);
+        return ();
+    }
+
+    ;; Kick from pool
+    if (op == op::force_kick()) {
+        op_controller_force_kick(value, in_msg);
+        return ();
+    }
+
+    ;; Unknown message
+    throw(error::invalid_message());
+}
+
+() op_elector(int flags, int value, slice in_msg) impure {
+    int op = in_msg~load_uint(32);
+    int query_id = in_msg~load_uint(64);
+    ctx_query_id = query_id;
+
+    ;; Bounced
+    ;; It seems that handling doesn't make sence sicne there are no throws (?) 
+    ;; in elector contract
+    if (flags & 1) {
+        return ();
+    }
+
+    ;; Stake response
+    if (op == elector::stake::response()) {
+        op_elector_stake_response(value, in_msg);
+        return ();
+    }
+    if (op == elector::stake::response::fail()) {
+        op_elector_stake_response_fail(value, in_msg);
+        return ();
+    }
+
+    ;; Refund response
+    if (op == elector::refund::response()) {
+        op_elector_recover_response(value, in_msg);
+        return ();
+    }
+
+    ;; Ignore
+}
+
+() op_owner(int flags, int value, slice in_msg) impure {
+    
+    ;; Ignore bounced
+    if (flags & 1) {
+        return ();
+    }
+
+    ;; Check value
+    throw_unless(error::invalid_message(), value >= params::min_op());
+
+    ;; Parse operation
+    int op = in_msg~load_uint(32);
+    int query_id = in_msg~load_uint(64);
+    int gas_limit = in_msg~load_coins();
+    set_gas_limit(gas_limit);
+    ctx_query_id = query_id;
+    throw_unless(error::invalid_message(), ctx_query_id > 0);
+
+    ;; Upgrade
+    if (op == op::upgrade()) {
+        op_upgrade(value, in_msg);
+        return ();
+    }
+
+    ;; Upgrade
+    if (op == op::update()) {
+        op_update(value, in_msg);
+        return ();
+    }
+
+    ;; Add stake
+    if (op == op::stake_deposit()) {
+        op_deposit(owner_id(), value);
+        return ();
+    }
+
+    ;; Withdraw stake
+    if (op == op::stake_withdraw()) {
+        int stake = in_msg~load_coins();
+        in_msg.end_parse();
+        op_withdraw(owner_id(), value, stake);
+        return ();
+    }
+
+    ;; Recover stake
+    if (op == op::stake_recover()) {
+        load_validator_data();
+        op_stake_recover(value);
+        return ();
+    }
+
+    ;; Donate stake
+    if (op == op::donate()) {
+        op_donate(value);
+        return ();
+    }
+
+    ;; Unknown message
+    throw(error::invalid_message());
+}
+
+(slice, (int)) ~parse_text_command(slice in_msg) {
+    int op = 0;
+    ;; 3 possible commands deposit, recover, withdraw
+    int first_char = in_msg~load_uint(8);
+
+    ;; Deposit
+    if( first_char == 68 ) { ;; D
+      throw_unless(error::unknown_text_command(), in_msg~load_uint(48) == 111533580577140); ;; eposit
+      op = op::stake_deposit();
+    }
+
+    ;; Withdraw
+    if( first_char == 87 ) { ;; W
+      throw_unless(error::unknown_text_command(), in_msg~load_uint(56) == 29682864265257335); ;; ithdraw
+      op = op::stake_withdraw();
+    }
+
+    ;; Recover
+    if( first_char == 82 ) { ;; R
+      throw_unless(error::unknown_text_command(), in_msg~load_uint(48) == 111477746197874); ;; ecover
+      op = op::stake_recover();
+    }
+
+    return (in_msg, (op));
+}
+
+() op_nominators(int member, int flags, int value, slice in_msg) impure {
+    
+    ;; Ignore bounced
+    if (flags & 1) {
+        return ();
+    }
+
+    ;; Check value
+    throw_unless(error::invalid_message(), value >= params::min_op());
+
+    ;; Parse operation
+    int op = in_msg~load_uint(32);
+
+    ;; Text operations
+    if (op == 0) {
+        ctx_query_id = 0;
+        op = in_msg~parse_text_command();
+
+        ;; Deposit stake
+        if (op == op::stake_deposit()) {
+            op_deposit(member, value);
+            return ();
+        }
+
+        ;; Withdraw stake
+        if (op == op::stake_withdraw()) {
+            op_withdraw(member, value, 0);
+            return ();
+        }
+
+        ;; Recover stake
+        if (op == op::stake_recover()) {
+            load_validator_data();
+            op_stake_recover(value);
+            return ();
+        }
+        
+        ;; Unknown message
+        throw(error::invalid_message());
+        return ();
+    }
+
+    int query_id = in_msg~load_uint(64);
+    int gas_limit = in_msg~load_coins();
+    set_gas_limit(gas_limit);
+    ctx_query_id = query_id;
+    throw_unless(error::invalid_message(), ctx_query_id > 0);
+
+    ;; Deposit stake
+    if (op == op::stake_deposit()) {
+        op_deposit(member, value);
+        return ();
+    }
+
+    ;; Withdraw stake
+    if (op == op::stake_withdraw()) {
+        int stake = in_msg~load_coins();
+        in_msg.end_parse();
+        op_withdraw(member, value, stake);
+        return ();
+    }
+
+    ;; Recover stake
+    if (op == op::stake_recover()) {
+        load_validator_data();
+        op_stake_recover(value);
+        return ();
+    }
+
+    ;; Donate stake
+    if (op == op::donate()) {
+        op_donate(value);
+        return ();
+    }
+
+    ;; Unknown message
+    throw(error::invalid_message());
+}
+
+() recv_internal(int msg_value, cell in_msg_cell, slice in_msg) impure {
+    
+    ;; Prepare message context
+    var cs = in_msg_cell.begin_parse();
+    var flags = cs~load_uint(4);  ;; int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool
+    slice s_addr = cs~load_msg_addr();
+    load_base_data();
+
+    ;; Handle controller messages
+    if (equal_slices(s_addr, ctx_controller)) {
+        load_validator_data();
+        op_controller(flags, msg_value, in_msg);
+        return ();
+    }
+
+    ;; Handle elector messages
+    if (equal_slices(s_addr, ctx_proxy)) {
+        load_validator_data();
+        op_elector(flags, msg_value, in_msg);
+        return ();
+    }
+
+    ;; Handle owner messages
+    if (equal_slices(s_addr, ctx_owner)) {
+        op_owner(flags, msg_value, in_msg);
+        return ();
+    }
+
+    ;; Nominators
+    var address = parse_work_addr(s_addr);
+    op_nominators(address, flags, msg_value, in_msg);
+}
+
+() recv_external(slice in_msg) impure {
+    ;; Do not accept external messages
+    throw(error::invalid_message());
+}
+
+;;
+;; Related contracts
+;;
+
+_ get_proxy() method_id {
+    load_base_data();
+    return ctx_proxy;
+}
+
+_ get_owner() method_id {
+    load_base_data();
+    return ctx_owner;
+}
+
+_ get_controller() method_id {
+    load_base_data();
+    return ctx_controller;
+}
+
+;;
+;; Balances for controller
+;;
+
+_ get_unowned() method_id {
+    load_base_data();
+    var [balance, extra] = get_balance();
+    return max(balance - owned_balance(), 0);
+}
+
+_ get_available() method_id {
+    load_base_data();
+    return ctx_balance - ctx_balance_sent;
+}
+
+;;
+;; Pool and staking status
+;;
+
+_ get_staking_status() method_id {
+    load_base_data();
+    load_validator_data();
+
+    var querySent = proxy_stored_query_id != 0;
+    var unlocked = (proxy_stake_until == 0) | (now() > proxy_stake_until);
+    return (proxy_stake_at, proxy_stake_until, proxy_stake_sent, querySent, unlocked, ctx_locked);
+}
+
+_ get_pool_status() method_id {
+    load_base_data();
+    load_member(owner_id());
+    return (ctx_balance, ctx_balance_sent, ctx_balance_pending_deposits, ctx_balance_pending_withdraw, ctx_balance_withdraw);
+}
+
+;;
+;; Params
+;;
+_ get_params() method_id {
+    load_base_data();
+    var (enabled, udpates_enabled, min_stake, deposit_fee, withdraw_fee, pool_fee, receipt_price) = ctx_extras;
+    return (enabled, udpates_enabled, min_stake, deposit_fee, withdraw_fee, pool_fee, receipt_price);
+}
+
+;;
+;; Members
+;;
+
+_ get_member_balance(slice address) method_id {
+    load_base_data();
+    load_member(parse_work_addr(address));
+    
+    member_update_balance();
+    return (ctx_member_balance, ctx_member_pending_deposit, ctx_member_pending_withdraw, ctx_member_withdraw);
+}
+
+_ get_members() method_id {
+    load_base_data();
+
+    ;; Init with owner
+    load_member(owner_id());
+    member_update_balance();
+    var list = nil;
+    list = cons([ctx_owner, ctx_member_balance, ctx_member_pending_deposit, ctx_member_pending_withdraw, ctx_member_withdraw], list);
+
+    ;; Iterate all members
+    var id = -1;
+    do {
+        (id, var cs, var f) = ctx_nominators.udict_get_next?(256, id);
+
+        ;; NOTE: One line condition doesn't work
+        if (f) {
+            if (id != owner_id()) {
+                ;; For some reason loading member from slice doesn't work
+                load_member(id);
+                member_update_balance();
+                list = cons([serialize_work_addr(id), ctx_member_balance, ctx_member_pending_deposit, ctx_member_pending_withdraw, ctx_member_withdraw], list);
+            }
+        }
+    } until (~ f);
+
+    return list;
+}
+
+_ get_member(slice address) method_id {
+    load_base_data();
+    load_member(parse_work_addr(address));
+    member_update_balance();
+    return (ctx_member_balance, ctx_member_pending_deposit, ctx_member_pending_withdraw, ctx_member_withdraw);
+}
+
