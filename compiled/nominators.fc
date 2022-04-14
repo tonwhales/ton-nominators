@@ -1688,3 +1688,10 @@ _ get_member(slice address) method_id {
     return (ctx_member_balance, ctx_member_pending_deposit, ctx_member_pending_withdraw, ctx_member_withdraw);
 }
 
+_ supported_interfaces() method_id {
+    return (
+        123515602279859691144772641439386770278, ;; org.ton.introspection.v0
+        256184278959413194623484780286929323492 ;; com.tonwhales.nominators:v0
+    );
+}
+
