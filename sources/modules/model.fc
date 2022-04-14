@@ -162,10 +162,6 @@ int apply_profit(int value, int value_profit, int profit) {
         ctx_member_pending_withdraw_all = withdraw_all;
     }
 
-    int p = 0;
-    p = ctx_balance_pending_deposits; p~dump();
-    p = ctx_balance_pending_withdraw; p~dump();
-
     ;; Return withdraw result
     return (withdrawed, remaining == 0);
 }

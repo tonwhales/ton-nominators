@@ -174,12 +174,12 @@ builder store_withdraw_completed(builder b) inline {
     return b.store_uint(7614653257073527469736132165096662684165476, 144);
 }
 
-;; 'Withdraw requested. Please, retry command when your balance is ready.'
+;; 'Withdraw requested. Please, retry the command when your balance is ready.'
 builder store_withdraw_delayed(builder b) inline {
     return b
-      .store_uint(1949351233810823032252520485584178069312463918, 152)
+      .store_uint(1949351233810823032252520485584178069312463918, 152) ;; 'Withdraw requested.'
       .store_text_space()
-      .store_uint(129235456374863711129272833139953997066553106386817338770482542, 208)
+      .store_uint(555062058613674355757418046597367430905687018487295295368960255172568430, 240) ;; 'Please, retry the command when'
       .store_text_space()
-      .store_uint(49121518824486666175116745069183411942170479416928337752603523374, 216);
+      .store_uint(45434371896731988359547695118970428857702208118225198, 176); ;; 'your balance is ready.'
 }
