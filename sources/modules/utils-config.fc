@@ -28,7 +28,7 @@ int lockup_lift_time(int stake_at, int stake_untill) {
     var (timeSince, timeUntil) = get_previous_cycle();
 
     ;; If previous cycle looks as a valid one
-    if (stake_at < timeSince) {
+    if (stake_at <= timeSince) {
         return timeSince + (stake_untill - stake_at);
     }
 
@@ -36,7 +36,7 @@ int lockup_lift_time(int stake_at, int stake_untill) {
     var (timeSince, timeUntil) = get_current_cycle();
 
     ;; If current cycle could be the one we joined validation
-    if (stake_at < timeSince) {
+    if (stake_at <= timeSince) {
         return timeSince + (stake_untill - stake_at);
     }
 
