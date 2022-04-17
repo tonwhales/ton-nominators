@@ -41,8 +41,13 @@ _ get_staking_status() method_id {
     load_validator_data();
 
     var querySent = proxy_stored_query_id != 0;
-    var unlocked = (proxy_stake_until == 0) | (now() > proxy_stake_until);
-    return (proxy_stake_at, proxy_stake_until, proxy_stake_sent, querySent, unlocked, ctx_locked);
+    var unlocked = (proxy_stake_until == 0) | (proxy_stake_until < now());
+    var until_val = proxy_stake_until;
+    if ((proxy_stake_at != 0) & (proxy_stake_until != 0)) {
+        until_val = lockup_lift_time(proxy_stake_at, proxy_stake_until);
+        unlocked = unlocked & (until_val < now());
+    }
+    return (proxy_stake_at, until_val, proxy_stake_sent, querySent, unlocked, ctx_locked);
 }
 
 _ get_pool_status() method_id {
@@ -70,6 +75,11 @@ _ get_member_balance(slice address) method_id {
     
     member_update_balance();
     return (ctx_member_balance, ctx_member_pending_deposit, ctx_member_pending_withdraw, ctx_member_withdraw);
+}
+
+_ get_members_raw() method_id {
+    load_base_data();
+    return ctx_nominators;
 }
 
 _ get_members() method_id {

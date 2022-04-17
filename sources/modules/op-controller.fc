@@ -144,6 +144,11 @@
         throw(error::invalid_message());
     }
 
+    ;; Double check that validation session and lockup was lifted
+    if ((proxy_stake_until != 0) & (proxy_stake_at != 0)) {
+        throw_unless(error::invalid_message(), lockup_lift_time(proxy_stake_at, proxy_stake_until) <= now());
+    }
+
     ;; Check value
     throw_unless(error::too_low_value(), value >= fees::stake_fees());
 
