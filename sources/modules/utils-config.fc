@@ -32,5 +32,13 @@ int lockup_lift_time(int stake_at, int stake_untill) {
         return timeSince + (stake_untill - stake_at);
     }
 
+    ;; Check current cycle
+    var (timeSince, timeUntil) = get_current_cycle();
+
+    ;; If current cycle could be the one we joined validation
+    if (stake_at < timeSince) {
+        return timeSince + (stake_untill - stake_at);
+    }
+
     return stake_untill;
 }
