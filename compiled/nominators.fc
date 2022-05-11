@@ -631,17 +631,15 @@ int apply_profit(int value, int value_profit, int profit) {
     ;; Check input
     throw_unless(error::invalid_stake_value(), value >= 0);
 
-    ;; value~dump();
-
     ;; Update balances
     member_update_balance();
-
-    ;; value~dump();
 
     ;; Reset pending withdrawal: would be overwritten later
     member_reset_pending_withdraw();
 
-    ;; value~dump();
+    ;; Pre-flight withdraw check
+    throw_unless(error::invalid_stake_value(), value >= 0);
+    throw_unless(error::invalid_stake_value(), ctx_member_balance + ctx_member_withdraw + ctx_member_pending_deposit >= value);
 
     ;; Check withdraw all
     var withdraw_all = false;
@@ -656,7 +654,7 @@ int apply_profit(int value, int value_profit, int profit) {
     
     ;; Try to withdraw from pending deposit
     if ((remaining > 0) & (ctx_member_pending_deposit >= 0)) {
-        int delta = min(ctx_member_pending_deposit, value);
+        int delta = min(ctx_member_pending_deposit, remaining);
         add_member_pending_deposit(- delta);
         withdrawed = withdrawed + delta;
         remaining = remaining - delta;
@@ -664,7 +662,7 @@ int apply_profit(int value, int value_profit, int profit) {
 
     ;; Try to withdraw from withdraw balance
     if ((remaining > 0) & ctx_member_withdraw > 0) {
-        int delta = min(ctx_member_withdraw, value);
+        int delta = min(ctx_member_withdraw, remaining);
         ctx_member_withdraw = ctx_member_withdraw - delta;
         ctx_balance_withdraw = ctx_balance_withdraw - delta;
         withdrawed = withdrawed + delta;
@@ -673,7 +671,7 @@ int apply_profit(int value, int value_profit, int profit) {
 
     ;; Try to withdraw from balance
     if ((remaining > 0) & (~ ctx_locked) & (ctx_member_balance > 0)) {
-        int delta = min(ctx_member_balance, value);
+        int delta = min(ctx_member_balance, remaining);
         ctx_member_balance = ctx_member_balance - delta;
         ctx_balance = ctx_balance - delta;
         withdrawed = withdrawed + delta;
@@ -882,10 +880,6 @@ int owned_balance() {
 
     ;; Load member
     load_member(member);
-
-    ;; Check stake
-    throw_unless(error::invalid_stake_value(), stake >= 0);
-    throw_unless(error::invalid_stake_value(), ctx_member_balance + ctx_member_withdraw + ctx_member_pending_deposit >= stake);
 
     ;; Try to withdraw immediatelly
     var (withdrawed, all) = member_stake_withdraw(stake);
@@ -1441,7 +1435,7 @@ int owned_balance() {
         return ();
     }
 
-    ;; Upgrade
+    ;; Update
     if (op == op::update()) {
         op_update(value, in_msg);
         return ();

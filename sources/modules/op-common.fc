@@ -59,10 +59,6 @@
     ;; Load member
     load_member(member);
 
-    ;; Check stake
-    throw_unless(error::invalid_stake_value(), stake >= 0);
-    throw_unless(error::invalid_stake_value(), ctx_member_balance + ctx_member_withdraw + ctx_member_pending_deposit >= stake);
-
     ;; Try to withdraw immediatelly
     var (withdrawed, all) = member_stake_withdraw(stake);
 
