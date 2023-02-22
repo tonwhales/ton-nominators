@@ -1,3 +1,21 @@
 (int, int) get_stake_parameters() {
     return (1000, 100);
 }
+
+int is_valid_stake_at(int stake_at) {
+    if (stake_at <= now()) {
+        return false;
+    }
+    if (stake_at - now() > params::max_stake_at_delta()) {
+        return false;
+    }
+    return true;
+}
+
+int lockup_lift_time(int stake_at, int stake_until, int stake_held_for) {
+    return stake_until;
+}
+
+int lockup_finalized_time(int stake_at, int stake_until, int stake_held_for) {
+    return stake_until;
+}

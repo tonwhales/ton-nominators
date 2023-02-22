@@ -183,3 +183,47 @@ builder store_withdraw_delayed(builder b) inline {
       .store_text_space()
       .store_uint(45434371896731988359547695118970428857702208118225198, 176); ;; 'your balance is ready.'
 }
+
+;; Parser of text commands
+(slice, (int)) ~parse_text_command(slice in_msg) {
+    int op = 0;
+    ;; 3 possible commands deposit, recover, withdraw
+    int first_char = in_msg~load_uint(8);
+
+    ;; Deposit
+    if( first_char == 68 ) { ;; D
+      throw_unless(error::unknown_text_command(), in_msg~load_uint(48) == 111533580577140); ;; eposit
+      in_msg.end_parse();
+      op = op::stake_deposit();
+    }
+
+    ;; Withdraw
+    if( first_char == 87 ) { ;; W
+      throw_unless(error::unknown_text_command(), in_msg~load_uint(56) == 29682864265257335); ;; ithdraw
+      in_msg.end_parse();
+      op = op::stake_withdraw();
+    }
+
+    ;; Recover
+    if( first_char == 82 ) { ;; R
+      throw_unless(error::unknown_text_command(), in_msg~load_uint(48) == 111477746197874); ;; ecover
+      in_msg.end_parse();
+      op = op::stake_recover();
+    }
+
+    ;; Unowned
+    if( first_char == 85 ) { ;; U
+      throw_unless(error::unknown_text_command(), in_msg~load_uint(48) == 121425024148836); ;; nowned
+      in_msg.end_parse();
+      op = op::withdraw_unowned();
+    }
+
+    ;; Airdrop
+    if (first_char == 65) { ;; A
+      throw_unless(error::unknown_text_command(), in_msg~load_uint(48) == 115940032409456); ;; irdrop
+      in_msg.end_parse();
+      op = op::donate();
+    }
+
+    return (in_msg, (op));
+}

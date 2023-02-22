@@ -27,6 +27,9 @@
         throw(error::invalid_message());
     }
 
+    ;; Allow only correct stake_at value
+    throw_unless(error::invalid_message(), is_valid_stake_at(stake_at));
+
     ;; Check stake value
     var availableStake = available_to_stake();
     throw_unless(error::invalid_stake_value(), availableStake >= stake);
@@ -41,6 +44,8 @@
     proxy_stake_at = stake_at;
     proxy_stake_until = stake_at + electedFor + stakeHeldFor;
     proxy_stake_sent = proxy_stake_sent + stake;
+    proxy_stake_held_for = stakeHeldFor;
+    proxy_stake_lock_final = false;
     proxy_stored_query_id = ctx_query_id;
     proxy_stored_query_op = elector::stake::request();
     proxy_stored_query_stake = stake;
@@ -72,11 +77,11 @@
 
     ;; Check response
     if (ctx_query_id != proxy_stored_query_id) {
-        ;; How to handle invalid? How it is possible?
+        ;; How to handle invalid qquery id? How it is possible?
         return ();
     }
     if (proxy_stored_query_op != elector::stake::request()) {
-        ;; How to handle invalid? How it is possible?
+        ;; How to handle invalid op? How it is possible?
         return ();
     }
 
@@ -116,6 +121,8 @@
         proxy_stake_at = 0;
         proxy_stake_until = 0;
         proxy_stake_sent = 0;
+        proxy_stake_held_for = 0;
+        proxy_stake_lock_final = 0;
         on_unlocked();
     }
 
@@ -123,6 +130,8 @@
     proxy_stored_query_id = 0;
     proxy_stored_query_op = 0;
     proxy_stored_query_stake = 0;
+    proxy_stake_held_for = 0;
+    proxy_stake_lock_final = 0;
 
     ;; Persist
     store_validator_data();
@@ -133,20 +142,40 @@
 ;; Recover
 ;;
 
+() op_stake_finalize(int value) impure {
+
+    ;; Finalize stake (will throw if state is incorrect)
+    stake_lock_finalize();
+
+    ;; Check value
+    throw_unless(error::too_low_value(), value >= fees::stake_fees());
+
+    ;; Persist
+    store_validator_data();
+    store_base_data();
+}
+
 () op_stake_recover(int value) impure {
 
-    ;; NOTE: We never block stake recover operation
-    ;;       in case of misbehaviour of something anyone always can get 
-    ;;       coins from elector after lockup period is up
+    ;;
+    ;; Check if stake was unlocked
+    ;;
 
-    ;; Allow request only if stake is exited lockup period
-    if ((proxy_stake_until != 0) & (now() < proxy_stake_until)) {
-        throw(error::invalid_message());
-    }
+    ;; NOTE: We never block stake recover operation if stake is not sent.
+    ;;       In case of misbehaviour of something anyone always can get 
+    ;;       coins from elector after lockup period is up.
+    if (proxy_stake_at != 0) {
 
-    ;; Double check that validation session and lockup was lifted
-    if ((proxy_stake_until != 0) & (proxy_stake_at != 0)) {
-        throw_unless(error::invalid_message(), lockup_lift_time(proxy_stake_at, proxy_stake_until) <= now());
+        ;; Finalize interval if needed
+        if (~ proxy_stake_lock_final) {
+            stake_lock_finalize();
+        }
+
+        ;; Check if finalized
+        throw_unless(error::invalid_message(), proxy_stake_lock_final);
+
+        ;; Check if unlocked
+        throw_unless(error::invalid_message(), (proxy_stake_until + params::stake_held_safety()) <= now());
     }
 
     ;; Check value
@@ -166,6 +195,37 @@
     store_base_data();
 }
 
+() op_stake_manual_recover(int value) impure {
+    if (proxy_stake_at != 0) {
+
+        ;; Finalize interval if needed
+        if (~ proxy_stake_lock_final) {
+
+            ;; Finalize
+            stake_lock_finalize();
+
+            ;; Persist
+            store_validator_data();
+            store_base_data();
+
+            ;; Recover
+            if ((proxy_stake_until + params::stake_held_safety()) <= now()) {
+                op_stake_recover(value);
+            }
+
+        } else {
+            ;; Check if unlocked
+            throw_unless(error::invalid_message(), (proxy_stake_until + params::stake_held_safety()) <= now());
+
+            ;; Start recover
+            op_stake_recover(value);
+        }
+    } else {
+        ;; Start recover
+        op_stake_recover(value);
+    }
+}
+
 () op_elector_recover_response(int value, slice in_msg) impure {
 
     if ((proxy_stake_until != 0) & (now() > proxy_stake_until)) {
@@ -174,6 +234,8 @@
         proxy_stake_sent = 0;
         proxy_stake_at = 0;
         proxy_stake_until = 0;
+        proxy_stake_held_for = 0;
+        proxy_stake_lock_final = false;
 
         ;; Reset query too
         proxy_stored_query_id = 0;
@@ -182,37 +244,26 @@
 
         ;; Handle stake recovered event
         ;; NOTE: Any stake recovery outside this condition might be just a noise and 
-        ;;       effect of various race condirtions that doesn't carry any substantianal vakue
+        ;;       effect of various race condirtions that doesn't carry any substantianal value
         on_stake_recovered(value - fees::stake_fees());
 
         ;; Reset lock state
         ;; NOTE: MUST be after on_stake_recovered since it adjusts withdrawals and 
         ;;       modifies global balance
         on_unlocked();
+    } else {
+
+        ;; This is a weird situation where we got our stake recovered but not being in a locked state
+        ;; or when state is locked but we got stuff regardles. Simply distribute profits if there are any.
+        var profit = value - fees::stake_fees();
+        if (profit > 0) {
+            distribute_profit(profit);
+        }
     }
 
     ;; Persist
     store_validator_data();
     store_base_data();
-}
-
-;;
-;; Withdraw unowned
-;;
-
-() op_controller_withdraw_unowned(int value, slice in_msg) impure {
-
-    ;; Reserve owned
-    raw_reserve(owned_balance(), 0);
-
-    ;; Send message to controller
-    send_empty_std_message(
-        ctx_controller, 
-        0, 
-        send_mode::carry_remaining_balance(), 
-        op::withdraw_unowned::response(), 
-        ctx_query_id
-    );
 }
 
 ;;
@@ -354,9 +405,15 @@
         return ();
     }
 
+    ;; Finalize stake
+    if (op == op::stake_lock_finalize()) {
+        op_stake_finalize(value);
+        return ();
+    }
+
     ;; Withdraw unowned
     if (op == op::withdraw_unowned()) {
-        op_controller_withdraw_unowned(value, in_msg);
+        op_withdraw_unowned(value, in_msg, ctx_controller, false);
         return ();
     }
 
@@ -383,12 +440,14 @@
 }
 
 () op_elector(int flags, int value, slice in_msg) impure {
+
+    ;; Parse parameters
     int op = in_msg~load_uint(32);
     int query_id = in_msg~load_uint(64);
     ctx_query_id = query_id;
 
     ;; Bounced
-    ;; It seems that handling doesn't make sence sicne there are no throws (?) 
+    ;; It seems that handling doesn't make sence sinсe there are no throws (?) 
     ;; in elector contract
     if (flags & 1) {
         return ();

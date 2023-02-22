@@ -1,3 +1,23 @@
+() op_change_address(int value, slice in_msg) impure {
+
+    ;; Parse parameters
+    var id = in_msg~load_uint(8);
+    var new_address = in_msg~load_msg_addr();
+    in_msg.end_parse();
+
+    ;; Update address
+    if (id == 0) {
+        ctx_owner = new_address;
+    } elseif (id == 1) {
+        ctx_controller = new_address;
+    } else {
+        throw(error::invalid_message());
+    }
+
+    ;; Persist
+    store_base_data();
+}
+
 () op_owner(int flags, int value, slice in_msg) impure {
     
     ;; Ignore bounced
@@ -10,11 +30,25 @@
 
     ;; Parse operation
     int op = in_msg~load_uint(32);
-    int query_id = in_msg~load_uint(64);
-    int gas_limit = in_msg~load_coins();
-    set_gas_limit(gas_limit);
-    ctx_query_id = query_id;
-    throw_unless(error::invalid_message(), ctx_query_id > 0);
+    int is_text = op == 0;
+    if (op == 0) {
+
+        ;; Query ID
+        ctx_query_id = 0;
+
+        ;; Op
+        op = in_msg~parse_text_command();
+    } else {
+
+        ;; Query ID
+        int query_id = in_msg~load_uint(64);
+        ctx_query_id = query_id;
+        throw_unless(error::invalid_message(), ctx_query_id > 0);
+
+        ;; Gas Limit
+        int gas_limit = in_msg~load_coins();
+        set_gas_limit(gas_limit);
+    }
 
     ;; Upgrade
     if (op == op::upgrade()) {
@@ -22,7 +56,7 @@
         return ();
     }
 
-    ;; Upgrade
+    ;; Update
     if (op == op::update()) {
         op_update(value, in_msg);
         return ();
@@ -36,8 +70,11 @@
 
     ;; Withdraw stake
     if (op == op::stake_withdraw()) {
-        int stake = in_msg~load_coins();
-        in_msg.end_parse();
+        int stake = 0;
+        if (~ is_text) {
+            stake = in_msg~load_coins();
+            in_msg.end_parse();
+        }
         op_withdraw(owner_id(), value, stake);
         return ();
     }
@@ -45,13 +82,25 @@
     ;; Recover stake
     if (op == op::stake_recover()) {
         load_validator_data();
-        op_stake_recover(value);
+        op_stake_manual_recover(value);
         return ();
     }
 
     ;; Donate stake
     if (op == op::donate()) {
         op_donate(value);
+        return ();
+    }
+
+    ;; Change controller
+    if (op == op::change_address()) {
+        op_change_address(value, in_msg);
+        return ();
+    }
+
+    ;; Withdraw unowned
+    if (op == op::withdraw_unowned()) {
+        op_withdraw_unowned(value, in_msg, ctx_owner, true);
         return ();
     }
 

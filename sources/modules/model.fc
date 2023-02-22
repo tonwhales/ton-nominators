@@ -295,3 +295,19 @@ int owned_balance() {
     ;; Reset sent amount
     ctx_balance_sent = 0;
 }
+
+() stake_lock_finalize() impure {
+    
+    ;; Check if possible to finalize
+    throw_unless(error::invalid_message(), (~ proxy_stake_lock_final) & (proxy_stake_at != 0));
+
+    ;; Resolve finalized lockup time
+    int finalized = lockup_finalized_time(proxy_stake_at, proxy_stake_until, proxy_stake_held_for);
+
+    ;; Check if finalization succeeded
+    throw_unless(error::invalid_message(), finalized > 0);
+
+    ;; Update
+    proxy_stake_lock_final = true;
+    proxy_stake_until = finalized;
+}

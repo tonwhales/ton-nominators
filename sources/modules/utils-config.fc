@@ -22,14 +22,50 @@
     return (timeSince, timeUntil);
 }
 
-int lockup_lift_time(int stake_at, int stake_untill) {
+int is_valid_stake_at(int stake_at) {
+    ;; Check current cycle
+    var (timeSince, timeUntil) = get_current_cycle();
+    if (stake_at < timeUntil) {
+        return false;
+    }
+    if (stake_at <= now()) {
+        return false;
+    }
+    if (stake_at - now() > params::max_stake_at_delta()) {
+        return false;
+    }
+    return true;
+}
+
+int lockup_finalized_time(int stake_at, int stake_until, int stake_held_for) {
+    if (stake_held_for == 0) {
+        return stake_until; ;; Legacy
+    } else {
+        ;; Find previous cycle
+        var (timeSince, timeUntil) = get_previous_cycle();
+        if (stake_at <= timeSince) { 
+            return max(timeUntil + stake_held_for, stake_until);
+        } else {
+            return -1;
+        }
+    }
+}
+
+int lockup_lift_time(int stake_at, int stake_until, int stake_held_for) {
+
+    ;; Calculate stake_held_for
+    int stake_lock_duration = stake_until - stake_at;
     
     ;; Resolve previous cycle parameters
     var (timeSince, timeUntil) = get_previous_cycle();
 
     ;; If previous cycle looks as a valid one
     if (stake_at <= timeSince) {
-        return timeSince + (stake_untill - stake_at);
+        if (stake_held_for > 0) {
+            return timeUntil + stake_held_for + params::stake_held_safety();
+        } else {
+            return timeSince + stake_lock_duration + params::stake_held_safety(); ;; Legacy
+        }
     }
 
     ;; Check current cycle
@@ -37,8 +73,12 @@ int lockup_lift_time(int stake_at, int stake_untill) {
 
     ;; If current cycle could be the one we joined validation
     if (stake_at <= timeSince) {
-        return timeSince + (stake_untill - stake_at);
+        if (stake_held_for > 0) {
+            return timeUntil + stake_held_for + params::stake_held_safety();
+        } else {
+            return timeSince + stake_lock_duration + params::stake_held_safety(); ;; Legacy
+        }
     }
 
-    return stake_untill;
+    return stake_until + params::stake_held_safety();
 }

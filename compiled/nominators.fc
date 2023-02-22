@@ -22,6 +22,7 @@ int op::stake_withdraw::delayed() asm "1958425639 PUSHINT";
 int op::stake_withdraw::response() asm "601104865 PUSHINT";
 int op::donate() asm "1203495973 PUSHINT";
 int op::donate::response() asm "3095625004 PUSHINT";
+
 ;;
 ;; Owner
 ;;
@@ -30,6 +31,7 @@ int op::upgrade() asm "3690657815 PUSHINT";
 int op::upgrade::response() asm "1395540087 PUSHINT";
 int op::update() asm "37541164 PUSHINT";
 int op::update::response() asm "839996522 PUSHINT";
+int op::change_address() asm "2431318753 PUSHINT";
 
 ;;
 ;; Controller
@@ -43,6 +45,7 @@ int op::withdraw_unowned() asm "622684824 PUSHINT";
 int op::withdraw_unowned::response() asm "488052159 PUSHINT";
 int op::force_kick() asm "1396625244 PUSHINT";
 int op::force_kick::notification() asm "2060499266 PUSHINT";
+int op::stake_lock_finalize() asm "362189324 PUSHINT";
 
 ;;
 ;; Elector
@@ -92,6 +95,8 @@ int params::min_stake() asm "1000000000 PUSHINT"; ;; 1 TON
 int params::min_fee() asm "1000000000 PUSHINT"; ;; 1 TON
 int params::pending_op() asm "5000000000 PUSHINT"; ;; 5 TON
 int params::ppc_precision() asm "10000000000000 PUSHINT"; ;; 10^13
+int params::stake_held_safety() asm "300 PUSHINT"; ;; 5 Minutes
+int params::max_stake_at_delta() asm "259200 PUSHINT"; ;; 72 hours = 72 * 60 * 60
 
 ;;
 ;; Members
@@ -285,6 +290,50 @@ builder store_withdraw_delayed(builder b) inline {
       .store_uint(45434371896731988359547695118970428857702208118225198, 176); ;; 'your balance is ready.'
 }
 
+;; Parser of text commands
+(slice, (int)) ~parse_text_command(slice in_msg) {
+    int op = 0;
+    ;; 3 possible commands deposit, recover, withdraw
+    int first_char = in_msg~load_uint(8);
+
+    ;; Deposit
+    if( first_char == 68 ) { ;; D
+      throw_unless(error::unknown_text_command(), in_msg~load_uint(48) == 111533580577140); ;; eposit
+      in_msg.end_parse();
+      op = op::stake_deposit();
+    }
+
+    ;; Withdraw
+    if( first_char == 87 ) { ;; W
+      throw_unless(error::unknown_text_command(), in_msg~load_uint(56) == 29682864265257335); ;; ithdraw
+      in_msg.end_parse();
+      op = op::stake_withdraw();
+    }
+
+    ;; Recover
+    if( first_char == 82 ) { ;; R
+      throw_unless(error::unknown_text_command(), in_msg~load_uint(48) == 111477746197874); ;; ecover
+      in_msg.end_parse();
+      op = op::stake_recover();
+    }
+
+    ;; Unowned
+    if( first_char == 85 ) { ;; U
+      throw_unless(error::unknown_text_command(), in_msg~load_uint(48) == 121425024148836); ;; nowned
+      in_msg.end_parse();
+      op = op::withdraw_unowned();
+    }
+
+    ;; Airdrop
+    if (first_char == 65) { ;; A
+      throw_unless(error::unknown_text_command(), in_msg~load_uint(48) == 115940032409456); ;; irdrop
+      in_msg.end_parse();
+      op = op::donate();
+    }
+
+    return (in_msg, (op));
+}
+
 (int, int) get_stake_parameters() {
     var cs = config_param(15).begin_parse();
     int electedFor = cs~load_uint(32);
@@ -309,14 +358,50 @@ builder store_withdraw_delayed(builder b) inline {
     return (timeSince, timeUntil);
 }
 
-int lockup_lift_time(int stake_at, int stake_untill) {
+int is_valid_stake_at(int stake_at) {
+    ;; Check current cycle
+    var (timeSince, timeUntil) = get_current_cycle();
+    if (stake_at < timeUntil) {
+        return false;
+    }
+    if (stake_at <= now()) {
+        return false;
+    }
+    if (stake_at - now() > params::max_stake_at_delta()) {
+        return false;
+    }
+    return true;
+}
+
+int lockup_finalized_time(int stake_at, int stake_until, int stake_held_for) {
+    if (stake_held_for == 0) {
+        return stake_until; ;; Legacy
+    } else {
+        ;; Find previous cycle
+        var (timeSince, timeUntil) = get_previous_cycle();
+        if (stake_at <= timeSince) { 
+            return max(timeUntil + stake_held_for, stake_until);
+        } else {
+            return -1;
+        }
+    }
+}
+
+int lockup_lift_time(int stake_at, int stake_until, int stake_held_for) {
+
+    ;; Calculate stake_held_for
+    int stake_lock_duration = stake_until - stake_at;
     
     ;; Resolve previous cycle parameters
     var (timeSince, timeUntil) = get_previous_cycle();
 
     ;; If previous cycle looks as a valid one
     if (stake_at <= timeSince) {
-        return timeSince + (stake_untill - stake_at);
+        if (stake_held_for > 0) {
+            return timeUntil + stake_held_for + params::stake_held_safety();
+        } else {
+            return timeSince + stake_lock_duration + params::stake_held_safety(); ;; Legacy
+        }
     }
 
     ;; Check current cycle
@@ -324,10 +409,14 @@ int lockup_lift_time(int stake_at, int stake_untill) {
 
     ;; If current cycle could be the one we joined validation
     if (stake_at <= timeSince) {
-        return timeSince + (stake_untill - stake_at);
+        if (stake_held_for > 0) {
+            return timeUntil + stake_held_for + params::stake_held_safety();
+        } else {
+            return timeSince + stake_lock_duration + params::stake_held_safety(); ;; Legacy
+        }
     }
 
-    return stake_untill;
+    return stake_until + params::stake_held_safety();
 }
 
 global int ctx_query_id;
@@ -433,6 +522,8 @@ global (int, int, int, int, int, int, int) ctx_extras;
 global int proxy_stake_at;
 global int proxy_stake_until;
 global int proxy_stake_sent;
+global int proxy_stake_held_for;
+global int proxy_stake_lock_final;
 global int proxy_stored_query_id;
 global int proxy_stored_query_op;
 global int proxy_stored_query_stake;
@@ -445,6 +536,14 @@ global int proxy_stored_query_stake;
     proxy_stored_query_id = cs~load_uint(64);
     proxy_stored_query_op = cs~load_uint(32);
     proxy_stored_query_stake = cs~load_coins();
+    proxy_stake_held_for = 0;
+    proxy_stake_lock_final = 0;
+    if (cs.slice_bits() >= 32) {
+        proxy_stake_held_for = cs~load_uint(32);
+        if (cs.slice_bits() >= 1) {
+            proxy_stake_lock_final = cs~load_int(1);
+        }
+    }
     cs.end_parse();
 }
 
@@ -456,6 +555,8 @@ global int proxy_stored_query_stake;
         .store_uint(proxy_stored_query_id, 64)
         .store_uint(proxy_stored_query_op, 32)
         .store_coins(proxy_stored_query_stake)
+        .store_uint(proxy_stake_held_for, 32)
+        .store_int(proxy_stake_lock_final, 1)
     .end_cell();
 }
 
@@ -820,6 +921,22 @@ int owned_balance() {
     ctx_balance_sent = 0;
 }
 
+() stake_lock_finalize() impure {
+    
+    ;; Check if possible to finalize
+    throw_unless(error::invalid_message(), (~ proxy_stake_lock_final) & (proxy_stake_at != 0));
+
+    ;; Resolve finalized lockup time
+    int finalized = lockup_finalized_time(proxy_stake_at, proxy_stake_until, proxy_stake_held_for);
+
+    ;; Check if finalization succeeded
+    throw_unless(error::invalid_message(), finalized > 0);
+
+    ;; Update
+    proxy_stake_lock_final = true;
+    proxy_stake_until = finalized;
+}
+
 () op_deposit(int member, int value) impure {
 
     ;; Read extras
@@ -997,6 +1114,32 @@ int owned_balance() {
 }
 
 ;;
+;; Withdraw unowned
+;;
+
+() op_withdraw_unowned(int value, slice in_msg, slice target, int safe) impure {
+
+    ;; Check unowned
+    var [balance, extra] = get_balance();
+    var unowned = max(balance - owned_balance(), 0);
+    if (~ safe) {
+        throw_unless(error::invalid_message(), unowned < coins::100());
+    }
+
+    ;; Reserve owned
+    raw_reserve(owned_balance(), 0);
+
+    ;; Send onowned message to target
+    send_empty_std_message(
+        target, 
+        0, 
+        send_mode::carry_remaining_balance(), 
+        op::withdraw_unowned::response(), 
+        ctx_query_id
+    );
+}
+
+;;
 ;; Stake Sending
 ;;
 
@@ -1025,6 +1168,9 @@ int owned_balance() {
         throw(error::invalid_message());
     }
 
+    ;; Allow onlu correct stake_at value
+    throw_unless(error::invalid_message(), is_valid_stake_at(stake_at));
+
     ;; Check stake value
     var availableStake = available_to_stake();
     throw_unless(error::invalid_stake_value(), availableStake >= stake);
@@ -1039,6 +1185,8 @@ int owned_balance() {
     proxy_stake_at = stake_at;
     proxy_stake_until = stake_at + electedFor + stakeHeldFor;
     proxy_stake_sent = proxy_stake_sent + stake;
+    proxy_stake_held_for = stakeHeldFor;
+    proxy_stake_lock_final = false;
     proxy_stored_query_id = ctx_query_id;
     proxy_stored_query_op = elector::stake::request();
     proxy_stored_query_stake = stake;
@@ -1070,11 +1218,11 @@ int owned_balance() {
 
     ;; Check response
     if (ctx_query_id != proxy_stored_query_id) {
-        ;; How to handle invalid? How it is possible?
+        ;; How to handle invalid qquery id? How it is possible?
         return ();
     }
     if (proxy_stored_query_op != elector::stake::request()) {
-        ;; How to handle invalid? How it is possible?
+        ;; How to handle invalid op? How it is possible?
         return ();
     }
 
@@ -1114,6 +1262,8 @@ int owned_balance() {
         proxy_stake_at = 0;
         proxy_stake_until = 0;
         proxy_stake_sent = 0;
+        proxy_stake_held_for = 0;
+        proxy_stake_lock_final = 0;
         on_unlocked();
     }
 
@@ -1121,6 +1271,8 @@ int owned_balance() {
     proxy_stored_query_id = 0;
     proxy_stored_query_op = 0;
     proxy_stored_query_stake = 0;
+    proxy_stake_held_for = 0;
+    proxy_stake_lock_final = 0;
 
     ;; Persist
     store_validator_data();
@@ -1131,20 +1283,40 @@ int owned_balance() {
 ;; Recover
 ;;
 
+() op_stake_finalize(int value) impure {
+
+    ;; Finalize stake (will throw if state is incorrect)
+    stake_lock_finalize();
+
+    ;; Check value
+    throw_unless(error::too_low_value(), value >= fees::stake_fees());
+
+    ;; Persist
+    store_validator_data();
+    store_base_data();
+}
+
 () op_stake_recover(int value) impure {
 
-    ;; NOTE: We never block stake recover operation
-    ;;       in case of misbehaviour of something anyone always can get 
-    ;;       coins from elector after lockup period is up
+    ;;
+    ;; Check if stake was unlocked
+    ;;
 
-    ;; Allow request only if stake is exited lockup period
-    if ((proxy_stake_until != 0) & (now() < proxy_stake_until)) {
-        throw(error::invalid_message());
-    }
+    ;; NOTE: We never block stake recover operation if stake is not sent.
+    ;;       In case of misbehaviour of something anyone always can get 
+    ;;       coins from elector after lockup period is up.
+    if (proxy_stake_at != 0) {
 
-    ;; Double check that validation session and lockup was lifted
-    if ((proxy_stake_until != 0) & (proxy_stake_at != 0)) {
-        throw_unless(error::invalid_message(), lockup_lift_time(proxy_stake_at, proxy_stake_until) <= now());
+        ;; Finalize interval if needed
+        if (~ proxy_stake_lock_final) {
+            stake_lock_finalize();
+        }
+
+        ;; Check if finalized
+        throw_unless(error::invalid_message(), proxy_stake_lock_final);
+
+        ;; Check if unlocked
+        throw_unless(error::invalid_message(), (proxy_stake_until + params::stake_held_safety()) <= now());
     }
 
     ;; Check value
@@ -1164,6 +1336,37 @@ int owned_balance() {
     store_base_data();
 }
 
+() op_stake_manual_recover(int value) impure {
+    if (proxy_stake_at != 0) {
+
+        ;; Finalize interval if needed
+        if (~ proxy_stake_lock_final) {
+
+            ;; Finalize
+            stake_lock_finalize();
+
+            ;; Persist
+            store_validator_data();
+            store_base_data();
+
+            ;; Recover
+            if ((proxy_stake_until + params::stake_held_safety()) <= now()) {
+                op_stake_recover(value);
+            }
+
+        } else {
+            ;; Check if unlocked
+            throw_unless(error::invalid_message(), (proxy_stake_until + params::stake_held_safety()) <= now());
+
+            ;; Start recover
+            op_stake_recover(value);
+        }
+    } else {
+        ;; Start recover
+        op_stake_recover(value);
+    }
+}
+
 () op_elector_recover_response(int value, slice in_msg) impure {
 
     if ((proxy_stake_until != 0) & (now() > proxy_stake_until)) {
@@ -1172,6 +1375,8 @@ int owned_balance() {
         proxy_stake_sent = 0;
         proxy_stake_at = 0;
         proxy_stake_until = 0;
+        proxy_stake_held_for = 0;
+        proxy_stake_lock_final = false;
 
         ;; Reset query too
         proxy_stored_query_id = 0;
@@ -1180,37 +1385,26 @@ int owned_balance() {
 
         ;; Handle stake recovered event
         ;; NOTE: Any stake recovery outside this condition might be just a noise and 
-        ;;       effect of various race condirtions that doesn't carry any substantianal vakue
+        ;;       effect of various race condirtions that doesn't carry any substantianal value
         on_stake_recovered(value - fees::stake_fees());
 
         ;; Reset lock state
         ;; NOTE: MUST be after on_stake_recovered since it adjusts withdrawals and 
         ;;       modifies global balance
         on_unlocked();
+    } else {
+
+        ;; This is a weird situation where we got our stake recovered but not being in a locked state
+        ;; or when state is locked but we got stuff regardles. Simply distribute profits if there are any.
+        var profit = value - fees::stake_fees();
+        if (profit > 0) {
+            distribute_profit(profit);
+        }
     }
 
     ;; Persist
     store_validator_data();
     store_base_data();
-}
-
-;;
-;; Withdraw unowned
-;;
-
-() op_controller_withdraw_unowned(int value, slice in_msg) impure {
-
-    ;; Reserve owned
-    raw_reserve(owned_balance(), 0);
-
-    ;; Send message to controller
-    send_empty_std_message(
-        ctx_controller, 
-        0, 
-        send_mode::carry_remaining_balance(), 
-        op::withdraw_unowned::response(), 
-        ctx_query_id
-    );
 }
 
 ;;
@@ -1352,9 +1546,15 @@ int owned_balance() {
         return ();
     }
 
+    ;; Finalize stake
+    if (op == op::stake_lock_finalize()) {
+        op_stake_finalize(value);
+        return ();
+    }
+
     ;; Withdraw unowned
     if (op == op::withdraw_unowned()) {
-        op_controller_withdraw_unowned(value, in_msg);
+        op_withdraw_unowned(value, in_msg, ctx_controller, false);
         return ();
     }
 
@@ -1381,12 +1581,14 @@ int owned_balance() {
 }
 
 () op_elector(int flags, int value, slice in_msg) impure {
+
+    ;; Parse parameters
     int op = in_msg~load_uint(32);
     int query_id = in_msg~load_uint(64);
     ctx_query_id = query_id;
 
     ;; Bounced
-    ;; It seems that handling doesn't make sence sicne there are no throws (?) 
+    ;; It seems that handling doesn't make sence sinсe there are no throws (?) 
     ;; in elector contract
     if (flags & 1) {
         return ();
@@ -1411,6 +1613,26 @@ int owned_balance() {
     ;; Ignore
 }
 
+() op_change_address(int value, slice in_msg) impure {
+
+    ;; Parse parameters
+    var id = in_msg~load_uint(8);
+    var new_address = in_msg~load_msg_addr();
+    in_msg.end_parse();
+
+    ;; Update address
+    if (id == 0) {
+        ctx_owner = new_address;
+    } elseif (id == 1) {
+        ctx_controller = new_address;
+    } else {
+        throw(error::invalid_message());
+    }
+
+    ;; Persist
+    store_base_data();
+}
+
 () op_owner(int flags, int value, slice in_msg) impure {
     
     ;; Ignore bounced
@@ -1423,11 +1645,25 @@ int owned_balance() {
 
     ;; Parse operation
     int op = in_msg~load_uint(32);
-    int query_id = in_msg~load_uint(64);
-    int gas_limit = in_msg~load_coins();
-    set_gas_limit(gas_limit);
-    ctx_query_id = query_id;
-    throw_unless(error::invalid_message(), ctx_query_id > 0);
+    int is_text = op == 0;
+    if (op == 0) {
+
+        ;; Query ID
+        ctx_query_id = 0;
+
+        ;; Op
+        op = in_msg~parse_text_command();
+    } else {
+
+        ;; Query ID
+        int query_id = in_msg~load_uint(64);
+        ctx_query_id = query_id;
+        throw_unless(error::invalid_message(), ctx_query_id > 0);
+
+        ;; Gas Limit
+        int gas_limit = in_msg~load_coins();
+        set_gas_limit(gas_limit);
+    }
 
     ;; Upgrade
     if (op == op::upgrade()) {
@@ -1449,8 +1685,11 @@ int owned_balance() {
 
     ;; Withdraw stake
     if (op == op::stake_withdraw()) {
-        int stake = in_msg~load_coins();
-        in_msg.end_parse();
+        int stake = 0;
+        if (~ is_text) {
+            stake = in_msg~load_coins();
+            in_msg.end_parse();
+        }
         op_withdraw(owner_id(), value, stake);
         return ();
     }
@@ -1458,7 +1697,7 @@ int owned_balance() {
     ;; Recover stake
     if (op == op::stake_recover()) {
         load_validator_data();
-        op_stake_recover(value);
+        op_stake_manual_recover(value);
         return ();
     }
 
@@ -1468,34 +1707,20 @@ int owned_balance() {
         return ();
     }
 
+    ;; Change controller
+    if (op == op::change_address()) {
+        op_change_address(value, in_msg);
+        return ();
+    }
+
+    ;; Withdraw unowned
+    if (op == op::withdraw_unowned()) {
+        op_withdraw_unowned(value, in_msg, ctx_owner, true);
+        return ();
+    }
+
     ;; Unknown message
     throw(error::invalid_message());
-}
-
-(slice, (int)) ~parse_text_command(slice in_msg) {
-    int op = 0;
-    ;; 3 possible commands deposit, recover, withdraw
-    int first_char = in_msg~load_uint(8);
-
-    ;; Deposit
-    if( first_char == 68 ) { ;; D
-      throw_unless(error::unknown_text_command(), in_msg~load_uint(48) == 111533580577140); ;; eposit
-      op = op::stake_deposit();
-    }
-
-    ;; Withdraw
-    if( first_char == 87 ) { ;; W
-      throw_unless(error::unknown_text_command(), in_msg~load_uint(56) == 29682864265257335); ;; ithdraw
-      op = op::stake_withdraw();
-    }
-
-    ;; Recover
-    if( first_char == 82 ) { ;; R
-      throw_unless(error::unknown_text_command(), in_msg~load_uint(48) == 111477746197874); ;; ecover
-      op = op::stake_recover();
-    }
-
-    return (in_msg, (op));
 }
 
 () op_nominators(int member, int flags, int value, slice in_msg) impure {
@@ -1510,41 +1735,25 @@ int owned_balance() {
 
     ;; Parse operation
     int op = in_msg~load_uint(32);
-
-    ;; Text operations
+    int is_text = op == 0;
     if (op == 0) {
+
+        ;; Query ID
         ctx_query_id = 0;
+
+        ;; Op
         op = in_msg~parse_text_command();
+    } else {
 
-        ;; Deposit stake
-        if (op == op::stake_deposit()) {
-            op_deposit(member, value);
-            return ();
-        }
+        ;; Query ID
+        int query_id = in_msg~load_uint(64);
+        ctx_query_id = query_id;
+        throw_unless(error::invalid_message(), ctx_query_id > 0);
 
-        ;; Withdraw stake
-        if (op == op::stake_withdraw()) {
-            op_withdraw(member, value, 0);
-            return ();
-        }
-
-        ;; Recover stake
-        if (op == op::stake_recover()) {
-            load_validator_data();
-            op_stake_recover(value);
-            return ();
-        }
-        
-        ;; Unknown message
-        throw(error::invalid_message());
-        return ();
+        ;; Gas Limit
+        int gas_limit = in_msg~load_coins();
+        set_gas_limit(gas_limit);
     }
-
-    int query_id = in_msg~load_uint(64);
-    int gas_limit = in_msg~load_coins();
-    set_gas_limit(gas_limit);
-    ctx_query_id = query_id;
-    throw_unless(error::invalid_message(), ctx_query_id > 0);
 
     ;; Deposit stake
     if (op == op::stake_deposit()) {
@@ -1554,8 +1763,11 @@ int owned_balance() {
 
     ;; Withdraw stake
     if (op == op::stake_withdraw()) {
-        int stake = in_msg~load_coins();
-        in_msg.end_parse();
+        int stake = 0;
+        if (~ is_text) {
+            stake = in_msg~load_coins();
+            in_msg.end_parse();
+        }
         op_withdraw(member, value, stake);
         return ();
     }
@@ -1563,7 +1775,7 @@ int owned_balance() {
     ;; Recover stake
     if (op == op::stake_recover()) {
         load_validator_data();
-        op_stake_recover(value);
+        op_stake_manual_recover(value);
         return ();
     }
 
@@ -1594,6 +1806,10 @@ int owned_balance() {
 
     ;; Handle elector messages
     if (equal_slices(s_addr, ctx_proxy)) {
+
+        ;; Always commit to avoid bounced messages due some errors and losing funds
+        commit();
+
         load_validator_data();
         op_elector(flags, msg_value, in_msg);
         return ();
@@ -1658,13 +1874,13 @@ _ get_staking_status() method_id {
     load_validator_data();
 
     var querySent = proxy_stored_query_id != 0;
-    var unlocked = (proxy_stake_until == 0) | (proxy_stake_until < now());
-    var until_val = proxy_stake_until;
+    var can_unlock = false;
+    var until_val = 0;
     if ((proxy_stake_at != 0) & (proxy_stake_until != 0)) {
-        until_val = lockup_lift_time(proxy_stake_at, proxy_stake_until);
-        unlocked = unlocked & (until_val < now());
+        until_val = lockup_lift_time(proxy_stake_at, proxy_stake_until, proxy_stake_held_for);
+        can_unlock = until_val <= now();
     }
-    return (proxy_stake_at, until_val, proxy_stake_sent, querySent, unlocked, ctx_locked);
+    return (proxy_stake_at, until_val, proxy_stake_sent, querySent, can_unlock, ctx_locked, proxy_stake_lock_final);
 }
 
 _ get_pool_status() method_id {

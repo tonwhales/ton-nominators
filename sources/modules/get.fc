@@ -41,13 +41,13 @@ _ get_staking_status() method_id {
     load_validator_data();
 
     var querySent = proxy_stored_query_id != 0;
-    var unlocked = (proxy_stake_until == 0) | (proxy_stake_until < now());
-    var until_val = proxy_stake_until;
+    var can_unlock = false;
+    var until_val = 0;
     if ((proxy_stake_at != 0) & (proxy_stake_until != 0)) {
-        until_val = lockup_lift_time(proxy_stake_at, proxy_stake_until);
-        unlocked = unlocked & (until_val < now());
+        until_val = lockup_lift_time(proxy_stake_at, proxy_stake_until, proxy_stake_held_for);
+        can_unlock = until_val <= now();
     }
-    return (proxy_stake_at, until_val, proxy_stake_sent, querySent, unlocked, ctx_locked);
+    return (proxy_stake_at, until_val, proxy_stake_sent, querySent, can_unlock, ctx_locked, proxy_stake_lock_final);
 }
 
 _ get_pool_status() method_id {

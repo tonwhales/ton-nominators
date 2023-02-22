@@ -15,6 +15,10 @@
 
     ;; Handle elector messages
     if (equal_slices(s_addr, ctx_proxy)) {
+
+        ;; Always commit to avoid bounced messages due some errors and losing funds
+        commit();
+
         load_validator_data();
         op_elector(flags, msg_value, in_msg);
         return ();

@@ -173,3 +173,29 @@
         ctx_query_id
     );
 }
+
+;;
+;; Withdraw unowned
+;;
+
+() op_withdraw_unowned(int value, slice in_msg, slice target, int safe) impure {
+
+    ;; Check unowned
+    var [balance, extra] = get_balance();
+    var unowned = max(balance - owned_balance(), 0);
+    if (~ safe) {
+        throw_unless(error::invalid_message(), unowned < coins::100());
+    }
+
+    ;; Reserve owned
+    raw_reserve(owned_balance(), 0);
+
+    ;; Send onowned message to target
+    send_empty_std_message(
+        target, 
+        0, 
+        send_mode::carry_remaining_balance(), 
+        op::withdraw_unowned::response(), 
+        ctx_query_id
+    );
+}

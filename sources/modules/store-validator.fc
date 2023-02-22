@@ -1,6 +1,8 @@
 global int proxy_stake_at;
 global int proxy_stake_until;
 global int proxy_stake_sent;
+global int proxy_stake_held_for;
+global int proxy_stake_lock_final;
 global int proxy_stored_query_id;
 global int proxy_stored_query_op;
 global int proxy_stored_query_stake;
@@ -13,6 +15,14 @@ global int proxy_stored_query_stake;
     proxy_stored_query_id = cs~load_uint(64);
     proxy_stored_query_op = cs~load_uint(32);
     proxy_stored_query_stake = cs~load_coins();
+    proxy_stake_held_for = 0;
+    proxy_stake_lock_final = 0;
+    if (cs.slice_bits() >= 32) {
+        proxy_stake_held_for = cs~load_uint(32);
+        if (cs.slice_bits() >= 1) {
+            proxy_stake_lock_final = cs~load_int(1);
+        }
+    }
     cs.end_parse();
 }
 
@@ -24,5 +34,7 @@ global int proxy_stored_query_stake;
         .store_uint(proxy_stored_query_id, 64)
         .store_uint(proxy_stored_query_op, 32)
         .store_coins(proxy_stored_query_stake)
+        .store_uint(proxy_stake_held_for, 32)
+        .store_int(proxy_stake_lock_final, 1)
     .end_cell();
 }
